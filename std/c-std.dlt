@@ -1,0 +1,44 @@
+# c-std.dlt
+# DEPRECATED: C Standard Library bindings - being replaced with pure Dolet implementations
+# Most functions now have pure Dolet equivalents in runtime/ modules
+# This file is kept for backward compatibility only
+
+# ============================================================================
+# NOTE: All dsl_* functions are DEPRECATED and should NOT be used
+# Use the pure Dolet alternatives instead:
+#   - dsl_strlen -> Memory.strlen
+#   - dsl_strcpy -> Str.strcpy  
+#   - dsl_strcat -> Str.concat
+#   - dsl_str_to_upper -> Str.to_upper
+#   - dsl_str_to_lower -> Str.to_lower
+#   - dsl_str_contains -> Str.contains
+#   - dsl_str_starts_with -> Str.starts_with
+#   - dsl_str_ends_with -> Str.ends_with
+#   - dsl_str_trim -> Str.trim
+#   - dsl_str_substring -> Str.substring
+#   - dsl_write_* -> Memory.write_*
+#   - dsl_read_* -> Memory.read_*
+#   - dsl_time_* -> TimeOps.*
+# ============================================================================
+
+# REMOVED: All extern "c" declarations - pure Dolet runtime is now used
+# extern lib "c":
+#     # File I/O - Now use FileOps from runtime
+#     # fun fopen(path: str, mode: str) -> i64
+#     # fun fclose(file: i64) -> i32
+#     # etc.
+#
+#     # All dsl_* functions removed - use pure Dolet equivalents above
+
+# Helper function to set a byte at a specific offset
+fun set_byte_at(addr: i64, offset: i64, value: i32):
+    # Calculate address: addr + offset
+    target: i64 = addr + offset
+    # Set 1 byte at that address to value (using pure Dolet Memory)
+    Memory.write_i8(target, value as i8)
+
+# Helper function to get a byte at a specific offset
+fun get_byte_at(addr: i64, offset: i64) -> i32:
+    # TODO: Need proper pointer dereference
+    # For now, return 0
+    return 0
