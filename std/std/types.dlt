@@ -17,3 +17,8 @@ type str = str
 type char = char
 type bool = bool
 type ptr = ptr
+
+# Collection types (codegen handles allocation/access by name)
+type list = list
+type array = array
+type map = map
