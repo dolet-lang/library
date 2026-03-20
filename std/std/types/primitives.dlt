@@ -1,0 +1,26 @@
+# Primitive Type Definitions
+
+@transparent
+struct Bool:
+    _raw: __bool
+
+@transparent
+struct Char:
+    _raw: __char
+
+@transparent
+struct Ptr:
+    _raw: __ptr
+
+@transparent
+struct StrType:
+    _raw: __str
+
+type bool = Bool
+type char = Char
+type ptr = Ptr
+type str = StrType
+
+extend bool:
+    fun to_str(self) -> str:
+        return Convert.bool_to_str(self)
