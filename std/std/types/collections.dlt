@@ -7,15 +7,15 @@
 # Map: linear key-value pairs — header [size:i32 | cap:i32 | entries...]
 
 @transparent
-struct List:
+struct List<T>:
     _raw: __ptr
 
 @transparent
-struct Array:
+struct Array<T>:
     _raw: __ptr
 
 @transparent
-struct Map:
+struct Map<K, V>:
     _raw: __ptr
 
 type list = List
