@@ -1,0 +1,32 @@
+# ============================================================================
+# Alloc - Heap allocation operations (Windows HeapAlloc/HeapFree)
+# Extends Memory with platform-specific heap allocation methods.
+# After loading this file, Memory.malloc(size), Memory.malloc_zeroed(size),
+# Memory.realloc(ptr, size), and Memory.free(ptr) become available.
+# ============================================================================
+
+extend Memory:
+    # Allocate uninitialized memory
+    static fun malloc(size: i64) -> ptr:
+        heap: i64 = GetProcessHeap()
+        result: i64 = HeapAlloc(heap, 0, size)
+        return result as ptr
+
+    # Allocate zero-initialized memory
+    static fun malloc_zeroed(size: i64) -> i64:
+        heap: i64 = GetProcessHeap()
+        return HeapAlloc(heap, 8, size)
+
+    # Reallocate memory block
+    static fun realloc(mem_ptr: i64, new_size: i64) -> i64:
+        heap: i64 = GetProcessHeap()
+        if mem_ptr == 0:
+            return HeapAlloc(heap, 0, new_size)
+        return HeapReAlloc(heap, 0, mem_ptr, new_size)
+
+    # Free allocated memory
+    static fun free(mem_ptr: i64):
+        if mem_ptr == 0:
+            return
+        heap: i64 = GetProcessHeap()
+        HeapFree(heap, 0, mem_ptr)

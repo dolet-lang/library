@@ -1,0 +1,119 @@
+# Primitive Type Definitions
+
+@transparent
+struct Bool:
+    _raw: __bool
+
+@transparent
+struct Char:
+    _raw: __char
+
+@transparent
+struct Pointer<T>:
+    _raw: __ptr
+
+@transparent
+struct StrType:
+    _raw: __str
+
+type bool = Bool
+type char = Char
+type ptr = Pointer
+type str = StrType
+
+extend bool:
+    fun to_str(self) -> str:
+        return Convert.bool_to_str(self)
+
+# ==================== Pointer Methods ====================
+# Pointer<T> is a typed wrapper over raw memory addresses.
+# T is a phantom type parameter (erased at MLIR level).
+# All pointers are !llvm.ptr underneath.
+
+extend ptr:
+    # --- Static constructors ---
+
+    fun of(addr: i64) -> i64:
+        return addr
+
+    fun nil() -> i64:
+        return 0
+
+    fun alloc(size: i64) -> i64:
+        return Memory.malloc(size)
+
+    fun alloc_zeroed(size: i64) -> i64:
+        return Memory.malloc_zeroed(size)
+
+    # --- Instance: query ---
+
+    fun is_null(self) -> bool:
+        return (self as i64) == 0
+
+    fun to_i64(self) -> i64:
+        return self as i64
+
+    # --- Instance: arithmetic ---
+
+    fun offset(self, bytes: i64) -> i64:
+        return (self as i64) + bytes
+
+    fun add(self, n: i64, stride: i64) -> i64:
+        return (self as i64) + (n * stride)
+
+    # --- Instance: read ---
+
+    fun read_i8(self) -> i8:
+        return Memory.read_i8(self as i64)
+
+    fun read_i16(self) -> i16:
+        return Memory.read_i16(self as i64)
+
+    fun read_i32(self) -> i32:
+        return Memory.read_i32(self as i64)
+
+    fun read_i64(self) -> i64:
+        return Memory.read_i64(self as i64)
+
+    fun read_f32(self) -> f32:
+        return Memory.read_f32(self as i64)
+
+    fun read_f64(self) -> f64:
+        return Memory.read_f64(self as i64)
+
+    fun read_ptr(self) -> i64:
+        return Memory.read_ptr(self as i64)
+
+    # --- Instance: write ---
+
+    fun write_i8(self, val: i8):
+        Memory.write_i8(self as i64, val)
+
+    fun write_i16(self, val: i16):
+        Memory.write_i16(self as i64, val)
+
+    fun write_i32(self, val: i32):
+        Memory.write_i32(self as i64, val)
+
+    fun write_i64(self, val: i64):
+        Memory.write_i64(self as i64, val)
+
+    fun write_f32(self, val: f32):
+        Memory.write_f32(self as i64, val)
+
+    fun write_f64(self, val: f64):
+        Memory.write_f64(self as i64, val)
+
+    fun write_ptr(self, val: i64):
+        Memory.write_ptr(self as i64, val)
+
+    # --- Instance: memory ops ---
+
+    fun copy_from(self, src: i64, bytes: i64):
+        Memory.copy(self as i64, src, bytes)
+
+    fun zero(self, bytes: i64):
+        Memory.zero(self as i64, bytes)
+
+    fun free(self):
+        Memory.free(self as i64)
