@@ -158,16 +158,18 @@ struct PathOps:
         i: i64 = 0
         j: i64 = 0
         prev_was_sep: bool = false
-        
+        c: i32 = 0
+        is_sep: bool = false
+
         while i < path_len:
-            c: i32 = Memory.read_i8((path as i64) + i) as i32
-            
+            c = Memory.read_i8((path as i64) + i) as i32
+
             # Convert forward slash to backslash
             if c == 47:  # '/'
                 c = 92   # '\'
-            
+
             # Check if current char is separator
-            is_sep: bool = c == 92
+            is_sep = c == 92
             
             # Skip duplicate separators
             if is_sep and prev_was_sep:
@@ -260,9 +262,9 @@ struct PathOps:
     static fun find_last_separator(path: str) -> i64:
         path_len: i64 = Memory.strlen(path)
         pos: i64 = path_len - 1
-        
+        c: i32 = 0
         while pos >= 0:
-            c: i32 = Memory.read_i8((path as i64) + pos) as i32
+            c = Memory.read_i8((path as i64) + pos) as i32
             if c == 92 or c == 47:  # '\' or '/'
                 return pos
             pos = pos - 1
@@ -311,8 +313,9 @@ struct PathOps:
         # Find last dot in filename
         dot_pos: i64 = -1
         i: i64 = filename_len - 1
+        c: i32 = 0
         while i >= 0:
-            c: i32 = Memory.read_i8((filename as i64) + i) as i32
+            c = Memory.read_i8((filename as i64) + i) as i32
             if c == 46:  # '.'
                 dot_pos = i
                 i = -1  # break

@@ -155,10 +155,12 @@ struct Process:
         chunk_size: i32 = 4096
         
         reading: bool = true
+        read_ok: i32 = 0
+        bytes_read: i32 = 0
         while reading:
             Memory.write_i32(bytes_read_ptr, 0)
-            read_ok: i32 = ReadFile(read_h, output_buf + total_read, chunk_size, bytes_read_ptr, 0)
-            bytes_read: i32 = Memory.read_i32(bytes_read_ptr)
+            read_ok = ReadFile(read_h, output_buf + total_read, chunk_size, bytes_read_ptr, 0)
+            bytes_read = Memory.read_i32(bytes_read_ptr)
             
             if read_ok == 0 or bytes_read == 0:
                 reading = false

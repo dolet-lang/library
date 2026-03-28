@@ -1,0 +1,10 @@
+module platform
+load platform/alloc
+load platform/format
+load platform/str
+load platform/io
+
+# Exported symbols
+export Convert
+export Str
+export IOOps

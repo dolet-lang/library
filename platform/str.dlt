@@ -1,3 +1,4 @@
+requires platform/alloc
 # ============================================================================
 # Str - Pure Dolet string operations
 # All string operations are implemented in Pure Dolet with no C dependencies.
@@ -30,26 +31,28 @@ struct Str:
         len: i64 = Memory.strlen(s)
         result: i64 = Memory.malloc(len + 1)
         i: i64 = 0
+        c: i32 = 0
         while i <= len:
-            c: i32 = Memory.read_i8((s as i64) + i) as i32
+            c = Memory.read_i8((s as i64) + i) as i32
             if c >= 97 and c <= 122:
                 c = c - 32
             Memory.write_i8(result + i, c as i8)
             i = i + 1
         return result as str
-    
+
     static fun to_lower(s: str) -> str:
         len: i64 = Memory.strlen(s)
         result: i64 = Memory.malloc(len + 1)
         i: i64 = 0
+        c: i32 = 0
         while i <= len:
-            c: i32 = Memory.read_i8((s as i64) + i) as i32
+            c = Memory.read_i8((s as i64) + i) as i32
             if c >= 65 and c <= 90:
                 c = c + 32
             Memory.write_i8(result + i, c as i8)
             i = i + 1
         return result as str
-    
+
     static fun contains(s: str, substr: str) -> bool:
         s_len: i64 = Memory.strlen(s)
         sub_len: i64 = Memory.strlen(substr)
@@ -57,14 +60,18 @@ struct Str:
             return false
         if sub_len == 0:
             return true
-        
+
         i: i64 = 0
+        j: i64 = 0
+        found: bool = true
+        c1: i32 = 0
+        c2: i32 = 0
         while i <= s_len - sub_len:
-            j: i64 = 0
-            found: bool = true
+            j = 0
+            found = true
             while j < sub_len and found:
-                c1: i32 = Memory.read_i8((s as i64) + i + j) as i32
-                c2: i32 = Memory.read_i8((substr as i64) + j) as i32
+                c1 = Memory.read_i8((s as i64) + i + j) as i32
+                c2 = Memory.read_i8((substr as i64) + j) as i32
                 if c1 != c2:
                     found = false
                 j = j + 1
@@ -72,33 +79,37 @@ struct Str:
                 return true
             i = i + 1
         return false
-    
+
     static fun starts_with(s: str, prefix: str) -> bool:
         s_len: i64 = Memory.strlen(s)
         prefix_len: i64 = Memory.strlen(prefix)
         if prefix_len > s_len:
             return false
-        
+
         i: i64 = 0
+        c1: i32 = 0
+        c2: i32 = 0
         while i < prefix_len:
-            c1: i32 = Memory.read_i8((s as i64) + i) as i32
-            c2: i32 = Memory.read_i8((prefix as i64) + i) as i32
+            c1 = Memory.read_i8((s as i64) + i) as i32
+            c2 = Memory.read_i8((prefix as i64) + i) as i32
             if c1 != c2:
                 return false
             i = i + 1
         return true
-    
+
     static fun ends_with(s: str, suffix: str) -> bool:
         s_len: i64 = Memory.strlen(s)
         suffix_len: i64 = Memory.strlen(suffix)
         if suffix_len > s_len:
             return false
-        
+
         offset: i64 = s_len - suffix_len
         i: i64 = 0
+        c1: i32 = 0
+        c2: i32 = 0
         while i < suffix_len:
-            c1: i32 = Memory.read_i8((s as i64) + offset + i) as i32
-            c2: i32 = Memory.read_i8((suffix as i64) + i) as i32
+            c1 = Memory.read_i8((s as i64) + offset + i) as i32
+            c2 = Memory.read_i8((suffix as i64) + i) as i32
             if c1 != c2:
                 return false
             i = i + 1
@@ -138,9 +149,7 @@ struct Str:
         # Copy characters from source to result
         i: i64 = 0
         while i < result_len:
-            src_addr: i64 = (s as i64) + st + i
-            c: i8 = Memory.read_i8(src_addr)
-            Memory.write_i8(result + i, c)
+            Memory.write_i8(result + i, Memory.read_i8((s as i64) + st + i))
             i = i + 1
         
         # Null terminate
@@ -164,8 +173,9 @@ struct Str:
     # Helper to find first non-whitespace position from start
     static fun find_trim_start(s: str, len: i64) -> i64:
         pos: i64 = 0
+        c: i32 = 0
         while pos < len:
-            c: i32 = Memory.read_i8((s as i64) + pos) as i32
+            c = Memory.read_i8((s as i64) + pos) as i32
             if Str.is_whitespace(c):
                 pos = pos + 1
             else:
@@ -175,8 +185,9 @@ struct Str:
     # Helper to find last non-whitespace position from end
     static fun find_trim_end(s: str, len: i64, start: i64) -> i64:
         pos: i64 = len
+        c: i32 = 0
         while pos > start:
-            c: i32 = Memory.read_i8((s as i64) + pos - 1) as i32
+            c = Memory.read_i8((s as i64) + pos - 1) as i32
             if Str.is_whitespace(c):
                 pos = pos - 1
             else:

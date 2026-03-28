@@ -1,6 +1,18 @@
 # ============================
 #  Math Module Entry Point
 # ============================
-# This is the required entry point (mod.dlt) for the Math module
+module extra.math
+load extra/math/math
 
-import math
+# Exported symbols
+export add
+export subtract
+export multiply
+export divide
+export abs
+export min
+export max
+export clamp
+export sign
+export factorial
+export dsqrt

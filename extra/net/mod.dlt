@@ -1,7 +1,11 @@
 # ============================
 #  Net Module Entry Point
 # ============================
-# This is the required entry point (mod.dlt) for the Net module
+module extra.net
+load extra/net/socket
+load extra/net/http
 
-import socket
-import http
+# Exported symbols
+export TcpSocket
+export Request
+export Http

@@ -85,18 +85,14 @@ struct Memory:
         i: i64 = 0
         val_i8: i8 = value as i8
         while i < size:
-            target: i64 = addr + i
-            Memory.write_i8(target, val_i8)
+            Memory.write_i8(addr + i, val_i8)
             i = i + 1
 
     # Copy memory from src to dest
     static fun copy(dest: i64, src: i64, size: i64) -> i32:
         i: i64 = 0
         while i < size:
-            src_addr: i64 = src + i
-            dest_addr: i64 = dest + i
-            b: i8 = Memory.read_i8(src_addr)
-            Memory.write_i8(dest_addr, b)
+            Memory.write_i8(dest + i, Memory.read_i8(src + i))
             i = i + 1
         return 0
 

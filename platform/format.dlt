@@ -1,4 +1,4 @@
-
+requires platform/alloc
 # ============================================================================
 # Convert - Type conversion utilities
 # ============================================================================
@@ -21,20 +21,23 @@ struct Convert:
         temp_buf: i64 = Memory.malloc(12)
         digit_count: i64 = 0
         
+        digit: i64 = 0
+        char_code: i8 = 0 as i8
         while n > 0:
-            digit: i64 = n - ((n / 10) * 10)
-            char_code: i8 = (digit as i32 + 48) as i8
+            digit = n - ((n / 10) * 10)
+            char_code = (digit as i32 + 48) as i8
             Memory.write_i8(temp_buf + digit_count, char_code)
             n = n / 10
             digit_count = digit_count + 1
-        
+
         if is_negative:
             Memory.write_i8(buffer + pos, 45 as i8)
             pos = pos + 1
-        
+
         i: i64 = digit_count - 1
+        c: i8 = 0 as i8
         while i >= 0:
-            c: i8 = Memory.read_i8(temp_buf + i)
+            c = Memory.read_i8(temp_buf + i)
             Memory.write_i8(buffer + pos, c)
             pos = pos + 1
             i = i - 1
@@ -60,20 +63,23 @@ struct Convert:
         temp_buf: i64 = Memory.malloc(21)
         digit_count: i64 = 0
         
+        digit: i64 = 0
+        char_code: i8 = 0 as i8
         while n > 0:
-            digit: i64 = n - ((n / 10) * 10)
-            char_code: i8 = (digit as i32 + 48) as i8
+            digit = n - ((n / 10) * 10)
+            char_code = (digit as i32 + 48) as i8
             Memory.write_i8(temp_buf + digit_count, char_code)
             n = n / 10
             digit_count = digit_count + 1
-        
+
         if is_negative:
             Memory.write_i8(buffer + pos, 45 as i8)
             pos = pos + 1
-        
+
         idx: i64 = digit_count - 1
+        ch: i8 = 0 as i8
         while idx >= 0:
-            ch: i8 = Memory.read_i8(temp_buf + idx)
+            ch = Memory.read_i8(temp_buf + idx)
             Memory.write_i8(buffer + pos, ch)
             pos = pos + 1
             idx = idx - 1
@@ -98,8 +104,9 @@ struct Convert:
         int_len: i64 = Memory.strlen(int_str)
         
         j: i64 = 0
+        c: i8 = 0 as i8
         while j < int_len:
-            c: i8 = Memory.read_i8((int_str as i64) + j)
+            c = Memory.read_i8((int_str as i64) + j)
             Memory.write_i8(buffer + pos, c)
             pos = pos + 1
             j = j + 1
@@ -113,10 +120,12 @@ struct Convert:
         
         divisor: i64 = 100000
         k: i64 = 0
+        d: i64 = 0
+        d_char: i8 = 0 as i8
         while k < 6:
-            d: i64 = frac_int / divisor
+            d = frac_int / divisor
             frac_int = frac_int - (d * divisor)
-            d_char: i8 = (d as i32 + 48) as i8
+            d_char = (d as i32 + 48) as i8
             Memory.write_i8(buffer + pos, d_char)
             pos = pos + 1
             divisor = divisor / 10

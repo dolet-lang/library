@@ -42,19 +42,20 @@ struct Args:
         n: i32 = 0
         i: i64 = 0
         
+        c: i32 = 0
         while i < len:
             # Skip spaces
             while i < len:
-                c: i32 = Memory.read_i8((line as i64) + i) as i32
+                c = Memory.read_i8((line as i64) + i) as i32
                 if c != 32:
                     break
                 i = i + 1
-            
+
             if i >= len:
                 break
-            
+
             # Check if quoted argument
-            c: i32 = Memory.read_i8((line as i64) + i) as i32
+            c = Memory.read_i8((line as i64) + i) as i32
             if c == 34:
                 # Skip opening quote
                 i = i + 1
@@ -74,9 +75,9 @@ struct Args:
                     if c == 32:
                         break
                     i = i + 1
-            
+
             n = n + 1
-        
+
         return n
     
     # Get argument at the given index (0-based)
@@ -91,24 +92,27 @@ struct Args:
         
         n: i32 = 0
         i: i64 = 0
-        
+        c: i32 = 0
+        arg_start: i64 = 0
+        is_quoted: bool = false
+
         while i < len:
             # Skip spaces
             while i < len:
-                c: i32 = Memory.read_i8((line as i64) + i) as i32
+                c = Memory.read_i8((line as i64) + i) as i32
                 if c != 32:
                     break
                 i = i + 1
-            
+
             if i >= len:
                 break
-            
+
             # Mark start of this argument
-            arg_start: i64 = i
-            is_quoted: bool = false
-            
+            arg_start = i
+            is_quoted = false
+
             # Check if quoted argument
-            c: i32 = Memory.read_i8((line as i64) + i) as i32
+            c = Memory.read_i8((line as i64) + i) as i32
             if c == 34:
                 is_quoted = true
                 i = i + 1

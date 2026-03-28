@@ -1,3 +1,4 @@
+requires platform/alloc
 # Collection Type Definitions
 # Transparent wrappers over __ptr (heap-allocated collections)
 # Zero-cost: erased to !llvm.ptr at MLIR level
@@ -182,10 +183,13 @@ extend list:
         data: i64 = Memory.read_i64(addr + 8)
         last: i64 = (size_val as i64) - 1
         i: i64 = index
+        src: i64 = 0
+        dst: i64 = 0
+        val: i64 = 0
         while i < last:
-            src: i64 = data + ((i + 1) * 8)
-            dst: i64 = data + (i * 8)
-            val: i64 = Memory.read_i64(src)
+            src = data + ((i + 1) * 8)
+            dst = data + (i * 8)
+            val = Memory.read_i64(src)
             Memory.write_i64(dst, val)
             i = i + 1
         Memory.write_i32(addr, size_val - 1)
@@ -196,10 +200,13 @@ extend list:
         data: i64 = Memory.read_i64(addr + 8)
         i: i64 = 0
         j: i64 = (size_val as i64) - 1
+        addr_i: i64 = 0
+        addr_j: i64 = 0
+        tmp: i64 = 0
         while i < j:
-            addr_i: i64 = data + (i * 8)
-            addr_j: i64 = data + (j * 8)
-            tmp: i64 = Memory.read_i64(addr_i)
+            addr_i = data + (i * 8)
+            addr_j = data + (j * 8)
+            tmp = Memory.read_i64(addr_i)
             Memory.write_i64(addr_i, Memory.read_i64(addr_j))
             Memory.write_i64(addr_j, tmp)
             i = i + 1
@@ -230,8 +237,9 @@ extend list:
         size_val: i32 = Memory.read_i32(addr)
         data: i64 = Memory.read_i64(addr + 8)
         i: i32 = 0
+        element_addr: i64 = 0
         while i < size_val:
-            element_addr: i64 = data + ((i as i64) * 8)
+            element_addr = data + ((i as i64) * 8)
             if Memory.read_i32(element_addr) == value:
                 return true
             i = i + 1
@@ -242,8 +250,9 @@ extend list:
         size_val: i32 = Memory.read_i32(addr)
         data: i64 = Memory.read_i64(addr + 8)
         i: i32 = 0
+        element_addr: i64 = 0
         while i < size_val:
-            element_addr: i64 = data + ((i as i64) * 8)
+            element_addr = data + ((i as i64) * 8)
             if Memory.read_i64(element_addr) == value:
                 return true
             i = i + 1
@@ -254,9 +263,11 @@ extend list:
         size_val: i32 = Memory.read_i32(addr)
         data: i64 = Memory.read_i64(addr + 8)
         i: i32 = 0
+        element_addr: i64 = 0
+        elem_str: str = ""
         while i < size_val:
-            element_addr: i64 = data + ((i as i64) * 8)
-            elem_str: str = Memory.read_i64(element_addr) as str
+            element_addr = data + ((i as i64) * 8)
+            elem_str = Memory.read_i64(element_addr) as str
             if elem_str == value:
                 return true
             i = i + 1
@@ -267,8 +278,9 @@ extend list:
         size_val: i32 = Memory.read_i32(addr)
         data: i64 = Memory.read_i64(addr + 8)
         i: i32 = 0
+        element_addr: i64 = 0
         while i < size_val:
-            element_addr: i64 = data + ((i as i64) * 8)
+            element_addr = data + ((i as i64) * 8)
             if Memory.read_f64(element_addr) == value:
                 return true
             i = i + 1
@@ -279,9 +291,11 @@ extend list:
         size_val: i32 = Memory.read_i32(addr)
         data: i64 = Memory.read_i64(addr + 8)
         i: i32 = 0
+        element_addr: i64 = 0
+        elem_val: i8 = 0
         while i < size_val:
-            element_addr: i64 = data + ((i as i64) * 8)
-            elem_val: i8 = Memory.read_i8(element_addr)
+            element_addr = data + ((i as i64) * 8)
+            elem_val = Memory.read_i8(element_addr)
             if value:
                 if elem_val != 0:
                     return true
@@ -296,8 +310,9 @@ extend list:
         size_val: i32 = Memory.read_i32(addr)
         data: i64 = Memory.read_i64(addr + 8)
         i: i32 = 0
+        element_addr: i64 = 0
         while i < size_val:
-            element_addr: i64 = data + ((i as i64) * 8)
+            element_addr = data + ((i as i64) * 8)
             if Memory.read_i32(element_addr) == value:
                 return i as i64
             i = i + 1
@@ -308,8 +323,9 @@ extend list:
         size_val: i32 = Memory.read_i32(addr)
         data: i64 = Memory.read_i64(addr + 8)
         i: i32 = 0
+        element_addr: i64 = 0
         while i < size_val:
-            element_addr: i64 = data + ((i as i64) * 8)
+            element_addr = data + ((i as i64) * 8)
             if Memory.read_i64(element_addr) == value:
                 return i as i64
             i = i + 1
@@ -320,9 +336,11 @@ extend list:
         size_val: i32 = Memory.read_i32(addr)
         data: i64 = Memory.read_i64(addr + 8)
         i: i32 = 0
+        element_addr: i64 = 0
+        elem_str: str = ""
         while i < size_val:
-            element_addr: i64 = data + ((i as i64) * 8)
-            elem_str: str = Memory.read_i64(element_addr) as str
+            element_addr = data + ((i as i64) * 8)
+            elem_str = Memory.read_i64(element_addr) as str
             if elem_str == value:
                 return i as i64
             i = i + 1
@@ -577,8 +595,9 @@ extend array:
         addr: i64 = self as i64
         size_val: i32 = Memory.read_i32(addr)
         i: i32 = 0
+        element_addr: i64 = 0
         while i < size_val:
-            element_addr: i64 = addr + 4 + ((i as i64) * 8)
+            element_addr = addr + 4 + ((i as i64) * 8)
             if Memory.read_i32(element_addr) == value:
                 return true
             i = i + 1
@@ -588,8 +607,9 @@ extend array:
         addr: i64 = self as i64
         size_val: i32 = Memory.read_i32(addr)
         i: i32 = 0
+        element_addr: i64 = 0
         while i < size_val:
-            element_addr: i64 = addr + 4 + ((i as i64) * 8)
+            element_addr = addr + 4 + ((i as i64) * 8)
             if Memory.read_i64(element_addr) == value:
                 return true
             i = i + 1
@@ -599,9 +619,11 @@ extend array:
         addr: i64 = self as i64
         size_val: i32 = Memory.read_i32(addr)
         i: i32 = 0
+        element_addr: i64 = 0
+        elem_str: str = ""
         while i < size_val:
-            element_addr: i64 = addr + 4 + ((i as i64) * 8)
-            elem_str: str = Memory.read_i64(element_addr) as str
+            element_addr = addr + 4 + ((i as i64) * 8)
+            elem_str = Memory.read_i64(element_addr) as str
             if elem_str == value:
                 return true
             i = i + 1
@@ -611,8 +633,9 @@ extend array:
         addr: i64 = self as i64
         size_val: i32 = Memory.read_i32(addr)
         i: i32 = 0
+        element_addr: i64 = 0
         while i < size_val:
-            element_addr: i64 = addr + 4 + ((i as i64) * 8)
+            element_addr = addr + 4 + ((i as i64) * 8)
             if Memory.read_f64(element_addr) == value:
                 return true
             i = i + 1
@@ -622,9 +645,11 @@ extend array:
         addr: i64 = self as i64
         size_val: i32 = Memory.read_i32(addr)
         i: i32 = 0
+        element_addr: i64 = 0
+        elem_val: i8 = 0
         while i < size_val:
-            element_addr: i64 = addr + 4 + ((i as i64) * 8)
-            elem_val: i8 = Memory.read_i8(element_addr)
+            element_addr = addr + 4 + ((i as i64) * 8)
+            elem_val = Memory.read_i8(element_addr)
             if value:
                 if elem_val != 0:
                     return true
@@ -641,10 +666,13 @@ extend array:
         size_val: i32 = Memory.read_i32(addr)
         i: i64 = 0
         j: i64 = (size_val as i64) - 1
+        addr_i: i64 = 0
+        addr_j: i64 = 0
+        tmp: i64 = 0
         while i < j:
-            addr_i: i64 = addr + 4 + (i * 8)
-            addr_j: i64 = addr + 4 + (j * 8)
-            tmp: i64 = Memory.read_i64(addr_i)
+            addr_i = addr + 4 + (i * 8)
+            addr_j = addr + 4 + (j * 8)
+            tmp = Memory.read_i64(addr_i)
             Memory.write_i64(addr_i, Memory.read_i64(addr_j))
             Memory.write_i64(addr_j, tmp)
             i = i + 1
@@ -676,10 +704,13 @@ extend map:
         addr: i64 = self as i64
         size_val: i32 = Memory.read_i32(addr)
         i: i32 = 0
+        entry_offset: i64 = 0
+        key_addr: i64 = 0
+        entry_key: str = ""
         while i < size_val:
-            entry_offset: i64 = 16 + ((i as i64) * 16)
-            key_addr: i64 = addr + entry_offset
-            entry_key: str = Memory.read_i64(key_addr) as str
+            entry_offset = 16 + ((i as i64) * 16)
+            key_addr = addr + entry_offset
+            entry_key = Memory.read_i64(key_addr) as str
             if entry_key == key:
                 return i as i64
             i = i + 1
@@ -768,9 +799,11 @@ extend map:
         size_val: i32 = Memory.read_i32(addr)
         last: i64 = (size_val as i64) - 1
         i: i64 = idx
+        dst: i64 = 0
+        src: i64 = 0
         while i < last:
-            dst: i64 = addr + 16 + (i * 16)
-            src: i64 = addr + 16 + ((i + 1) * 16)
+            dst = addr + 16 + (i * 16)
+            src = addr + 16 + ((i + 1) * 16)
             Memory.write_i64(dst, Memory.read_i64(src))
             Memory.write_i64(dst + 8, Memory.read_i64(src + 8))
             i = i + 1
@@ -791,10 +824,13 @@ extend map:
         Memory.write_i32(header + 4, cap as i32)
         Memory.write_i64(header + 8, data)
         i: i32 = 0
+        entry_offset: i64 = 0
+        key_val: i64 = 0
+        data_offset: i64 = 0
         while i < size_val:
-            entry_offset: i64 = 16 + ((i as i64) * 16)
-            key_val: i64 = Memory.read_i64(addr + entry_offset)
-            data_offset: i64 = (i as i64) * 8
+            entry_offset = 16 + ((i as i64) * 16)
+            key_val = Memory.read_i64(addr + entry_offset)
+            data_offset = (i as i64) * 8
             Memory.write_i64(data + data_offset, key_val)
             i = i + 1
         return header
@@ -812,10 +848,17 @@ extend map:
         Memory.write_i32(header + 4, cap as i32)
         Memory.write_i64(header + 8, data)
         i: i32 = 0
+        entry_offset: i64 = 0
+        val: i64 = 0
+        data_offset: i64 = 0
         while i < size_val:
-            entry_offset: i64 = 16 + ((i as i64) * 16) + 8
-            val: i64 = Memory.read_i64(addr + entry_offset)
-            data_offset: i64 = (i as i64) * 8
+            entry_offset = 16 + ((i as i64) * 16) + 8
+            val = Memory.read_i64(addr + entry_offset)
+            data_offset = (i as i64) * 8
             Memory.write_i64(data + data_offset, val)
             i = i + 1
         return header
+
+
+
+

@@ -1,0 +1,39 @@
+module std
+load sys/windows/kernel32
+load platform/alloc
+load platform/format
+load platform/str
+load platform/io
+load std/io
+load platform/file
+load platform/path
+load platform/args
+load platform/process
+load core/types/collections
+
+# Selective import mapping — import std.<name>
+expose platform/str as string
+expose std/io as io
+expose platform/format as format
+expose core/types/collections as collections
+expose platform/alloc as alloc
+expose sys/windows/kernel32 as kernel
+expose platform/file as file
+expose platform/path as path
+
+# Exported symbols — public API
+export Memory
+export Convert
+export Str
+export IOOps
+export FileOps
+export PathOps
+export Args
+export Process
+export List
+export Array
+export Map
+export print
+export println
+export print_no_newline
+export flush

@@ -1,0 +1,23 @@
+module sys.windows
+load sys/windows/kernel32
+
+# Exported symbols (FFI)
+export Sleep
+export GetStdHandle
+export WriteConsoleA
+export ReadConsoleA
+export GetProcessHeap
+export HeapAlloc
+export HeapReAlloc
+export HeapFree
+export CreateFileA
+export CloseHandle
+export ReadFile
+export WriteFile
+export SetFilePointer
+export GetFileSize
+export ExitProcess
+export GetCommandLineA
+export CreateProcessA
+export WaitForSingleObject
+export GetExitCodeProcess

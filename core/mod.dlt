@@ -1,0 +1,24 @@
+module core
+load core/memory
+load core/types/integers
+load core/types/floats
+load core/types/primitives
+
+# Exported symbols
+export Memory
+export I8
+export I16
+export I32
+export I64
+export I128
+export U8
+export U16
+export U32
+export U64
+export U128
+export F32
+export F64
+export Bool
+export Char
+export Pointer
+export StrType

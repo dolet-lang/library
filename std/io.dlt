@@ -1,3 +1,5 @@
+requires platform/io
+requires platform/format
 # io.dlt
 # Dolet Standard I/O Library
 # Tier 1 - Auto-loaded, no import needed

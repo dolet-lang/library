@@ -1,4 +1,5 @@
+module extra.random
+load extra/random/random
 
-
-
-import random
+# Exported symbols
+export Rand

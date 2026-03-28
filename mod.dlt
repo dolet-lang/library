@@ -1,0 +1,29 @@
+# ============================================
+#  Dolet Standard Library — Module Registry
+# ============================================
+# This is the root entry point for all library modules.
+# The compiler reads this file to know where each module lives.
+#
+# Syntax:
+#   module <path> as <name>
+#
+# The compiler uses this registry to resolve "import X" statements
+# instead of guessing the directory structure.
+# ============================================
+
+# Core runtime (auto-loaded for every program)
+module core/mod as core
+
+# Standard library (loaded on "import std")
+module std/mod as std
+
+# Platform layer
+module platform/mod as platform
+
+# System / OS-specific
+module sys/windows/mod as sys.windows
+
+# Extra libraries
+module extra/math/mod as extra.math
+module extra/net/mod as extra.net
+module extra/random/mod as extra.random
