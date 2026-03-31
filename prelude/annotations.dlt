@@ -1,0 +1,64 @@
+# ============================================
+#  Dolet Prelude: Built-in Annotations
+# ============================================
+# Loaded automatically before all other code.
+# These are compiler-intrinsic annotations
+# available to every program without import.
+# ============================================
+
+# --- Struct allocation strategy ---
+
+annot transparent:
+    target: struct
+
+annot stack:
+    target: struct
+
+annot heap:
+    target: struct
+
+# --- LLVM function attributes ---
+
+annot inline:
+    target: fun
+    effect: llvm
+        attribute: alwaysinline
+
+annot noinline:
+    target: fun
+    effect: llvm
+        attribute: noinline
+    conflicts: [inline]
+
+annot hot:
+    target: fun
+    effect: llvm
+        attribute: hot
+
+annot cold:
+    target: fun
+    effect: llvm
+        attribute: cold
+    conflicts: [hot]
+
+annot pure:
+    target: fun
+    effect: llvm
+        attribute: readnone
+
+annot noreturn:
+    target: fun
+    effect: llvm
+        attribute: noreturn
+
+# --- Compiler message annotations ---
+
+annot deprecated:
+    target: fun, struct
+    emit: warning
+        message: this symbol is deprecated
+
+annot must_use:
+    target: fun
+    emit: error
+        message: return value must be used
