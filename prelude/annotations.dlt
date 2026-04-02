@@ -8,57 +8,47 @@
 
 # --- Struct allocation strategy ---
 
-annot transparent:
-    target: struct
-
-annot stack:
-    target: struct
-
-annot heap:
-    target: struct
+annot transparent = Annot(target = struct)
+annot stack = Annot(target = struct)
+annot heap = Annot(target = struct)
 
 # --- LLVM function attributes ---
 
-annot inline:
-    target: fun
-    effect: llvm
-        attribute: alwaysinline
-
-annot noinline:
-    target: fun
-    effect: llvm
-        attribute: noinline
-    conflicts: [inline]
-
-annot hot:
-    target: fun
-    effect: llvm
-        attribute: hot
-
-annot cold:
-    target: fun
-    effect: llvm
-        attribute: cold
-    conflicts: [hot]
-
-annot pure:
-    target: fun
-    effect: llvm
-        attribute: readnone
-
-annot noreturn:
-    target: fun
-    effect: llvm
-        attribute: noreturn
+annot inline = Annot(
+    target = fun, 
+    effect = "llvm:alwaysinline"
+    )
+annot noinline = Annot(
+    target = fun, 
+    effect = "llvm:noinline", 
+    conflicts = [inline]
+    )
+annot hot = Annot(
+    target = fun, 
+    effect = "llvm:hot"
+    )
+annot cold = Annot(
+    target = fun, 
+    effect = "llvm:cold", 
+    conflicts = [hot]
+    )
+annot pure = Annot(
+    target = fun, 
+    effect = "llvm:readnone"
+    )
+annot noreturn = Annot(
+    target = fun, 
+    effect = "llvm:noreturn"
+    )
 
 # --- Compiler message annotations ---
 
-annot deprecated:
-    target: fun, struct
-    emit: warning
-        message: this symbol is deprecated
+annot deprecated = Annot(
+    target = fun | struct, 
+    emit = warning("this symbol is deprecated")
+    )
+annot must_use = Annot(
+    target = fun, 
+    emit = error("return value must be used")
+    )
 
-annot must_use:
-    target: fun
-    emit: error
-        message: return value must be used

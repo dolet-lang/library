@@ -10,6 +10,7 @@ load platform/path
 load platform/args
 load platform/process
 load core/types/collections
+load std/fileIO
 
 # Selective import mapping — import std.<name>
 expose platform/str as string
@@ -37,3 +38,4 @@ export print
 export println
 export print_no_newline
 export flush
+export File
