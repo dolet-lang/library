@@ -35,3 +35,4 @@ extern lib "kernel32":
     # Pipe APIs (for stdout capture)
     fun CreatePipe(hReadPipe: i64, hWritePipe: i64, lpPipeAttributes: i64, nSize: i32) -> i32
     fun SetHandleInformation(hObject: i64, dwMask: i32, dwFlags: i32) -> i32
+    fun DeleteFileA(lpFileName: str) -> i32
