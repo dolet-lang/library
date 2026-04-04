@@ -2,7 +2,7 @@
 # Process - Process execution (Linux — raw fork/execve/waitpid, NO libc)
 # ============================================================================
 
-requires sys/linux/syscalls
+requires platform/linux/syscalls
 
 struct Process:
     # Run a shell command via /bin/sh -c
@@ -30,3 +30,9 @@ struct Process:
         # WEXITSTATUS = (status >> 8) & 0xFF
         exit_code: i32 = (status / 256) as i32
         return exit_code
+
+    # Run command and capture stdout output
+    static fun run_capture(command: str) -> str:
+        # TODO: implement pipe-based capture on Linux
+        Process.run(command)
+        return ""

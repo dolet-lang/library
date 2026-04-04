@@ -2,7 +2,7 @@
 # Alloc - Heap allocation (Linux — mmap-based, NO libc)
 # ============================================================================
 
-requires sys/linux/syscalls
+requires platform/linux/syscalls
 
 extend Memory:
     # Allocate uninitialized memory

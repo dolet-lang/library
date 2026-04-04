@@ -1,4 +1,4 @@
-requires platform/alloc
+requires platform/windows/alloc
 # ============================================================================
 # Str - Pure Dolet string operations
 # All string operations are implemented in Pure Dolet with no C dependencies.

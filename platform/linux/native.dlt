@@ -1,0 +1,12 @@
+# ============================================================================
+# NativeCall - Unified API facade using multiple static inheritance
+# Extends all platform modules under one namespace
+# ============================================================================
+
+struct NativeCall extends Memory, TimeOps, IOOps, Convert, Str, Console, FileOps, PathOps, NetOps, Args, Process """
+# All native functions accessible via NativeCall.method_name()
+"""
+
+imple NativeCall:
+    static fun call(value):
+        return value

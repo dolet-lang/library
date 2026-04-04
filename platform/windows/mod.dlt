@@ -1,5 +1,5 @@
 module sys.windows
-load sys/windows/kernel32
+load platform/windows/kernel32
 
 # Exported symbols (FFI)
 export Sleep

@@ -2,7 +2,7 @@
 # IOOps - I/O operations (Linux — raw write syscall, NO libc)
 # ============================================================================
 
-requires sys/linux/syscalls
+requires platform/linux/syscalls
 
 struct IOOps:
     # Print string with newline (stdout = fd 1)

@@ -1,33 +1,64 @@
 # ============================================================================
-# Time - Time operations (Linux — raw clock_gettime/nanosleep, NO libc)
+# TimeOps - Time operations (Linux — raw clock_gettime/nanosleep, NO libc)
 # ============================================================================
 
-requires sys/linux/syscalls
+requires platform/linux/syscalls
 
-struct Time:
-    static fun sleep(ms: i32):
-        # struct timespec { tv_sec: i64, tv_nsec: i64 }
+struct TimeOps:
+    # Sleep for specified seconds (can be fractional)
+    static fun time_sleep(seconds: f64):
+        if seconds <= 0.0:
+            return
+        ms_f64: f64 = seconds * 1000.0
+        ms_i32: i32 = ms_f64 as i32
         ts: i64 = dsl_malloc(16)
-        sec: i64 = (ms / 1000) as i64
-        nsec: i64 = ((ms - ((ms / 1000) * 1000)) * 1000000) as i64
+        sec: i64 = (ms_i32 / 1000) as i64
+        nsec: i64 = ((ms_i32 - ((ms_i32 / 1000) * 1000)) * 1000000) as i64
         Memory.write_i64(ts, sec)
         Memory.write_i64(ts + 8, nsec)
         dsl_nanosleep(ts, 0)
         dsl_free(ts)
 
-    static fun millis() -> i64:
+    # Sleep for specified milliseconds
+    static fun time_sleep_ms(ms: i64):
+        if ms <= 0:
+            return
+        ms_i32: i32 = ms as i32
         ts: i64 = dsl_malloc(16)
-        # CLOCK_MONOTONIC = 1
-        dsl_clock_gettime(1, ts)
+        sec: i64 = (ms_i32 / 1000) as i64
+        nsec: i64 = ((ms_i32 - ((ms_i32 / 1000) * 1000)) * 1000000) as i64
+        Memory.write_i64(ts, sec)
+        Memory.write_i64(ts + 8, nsec)
+        dsl_nanosleep(ts, 0)
+        dsl_free(ts)
+
+    # Get current time in seconds since Unix epoch
+    static fun time_now() -> f64:
+        ts: i64 = dsl_malloc(16)
+        # CLOCK_REALTIME = 0 (Unix epoch time)
+        dsl_clock_gettime(0, ts)
+        sec: i64 = Memory.read_i64(ts)
+        nsec: i64 = Memory.read_i64(ts + 8)
+        dsl_free(ts)
+        seconds: f64 = (sec as f64) + ((nsec as f64) / 1000000000.0)
+        return seconds
+
+    # Get current time in milliseconds since epoch
+    static fun time_now_ms() -> i64:
+        ts: i64 = dsl_malloc(16)
+        # CLOCK_REALTIME = 0 (Unix epoch time)
+        dsl_clock_gettime(0, ts)
         sec: i64 = Memory.read_i64(ts)
         nsec: i64 = Memory.read_i64(ts + 8)
         dsl_free(ts)
         return (sec * 1000) + (nsec / 1000000)
 
-    static fun micros() -> i64:
+    # Get current time in nanoseconds (high resolution)
+    static fun time_now_ns() -> i64:
         ts: i64 = dsl_malloc(16)
-        dsl_clock_gettime(1, ts)
+        # CLOCK_REALTIME = 0 (Unix epoch time)
+        dsl_clock_gettime(0, ts)
         sec: i64 = Memory.read_i64(ts)
         nsec: i64 = Memory.read_i64(ts + 8)
         dsl_free(ts)
-        return (sec * 1000000) + (nsec / 1000)
+        return (sec * 1000000000) + nsec

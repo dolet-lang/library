@@ -2,7 +2,7 @@
 # PathOps - Path operations (Linux — raw readlink/getcwd syscalls, NO libc)
 # ============================================================================
 
-requires sys/linux/syscalls
+requires platform/linux/syscalls
 
 struct PathOps:
     static fun get_exe_path() -> str:

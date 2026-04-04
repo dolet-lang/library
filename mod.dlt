@@ -20,8 +20,8 @@ module std/mod as std
 # Platform layer
 module platform/mod as platform
 
-# System / OS-specific
-module sys/windows/mod as sys.windows
+# System / OS-specific (now under platform/<os>/)
+module platform/windows/mod as sys.windows
 
 # Extra libraries
 module extra/math/mod as extra.math

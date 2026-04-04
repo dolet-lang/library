@@ -1,0 +1,88 @@
+# ============================================================================
+# Args - Command Line Arguments (Linux — /proc/self/cmdline, NO libc)
+# Matches Windows Args API
+# ============================================================================
+
+struct Args:
+    # Get the full raw command line string
+    static fun get_raw() -> str:
+        fd: i32 = dsl_open("/proc/self/cmdline", 0, 0)
+        if fd < 0:
+            return ""
+        buf: i64 = Memory.malloc(4096)
+        total: i64 = dsl_read(fd, buf, 4095)
+        dsl_close(fd)
+        if total <= 0:
+            Memory.free(buf)
+            return ""
+        # /proc/self/cmdline uses \0 separators — replace with spaces
+        i: i64 = 0
+        while i < total - 1:
+            b: i8 = Memory.read_i8(buf + i)
+            if b == 0:
+                Memory.write_i8(buf + i, 32 as i8)
+            i = i + 1
+        Memory.write_i8(buf + total, 0 as i8)
+        return buf as str
+
+    # Count the number of arguments
+    static fun count() -> i32:
+        fd: i32 = dsl_open("/proc/self/cmdline", 0, 0)
+        if fd < 0:
+            return 0
+        buf: i64 = Memory.malloc(4096)
+        total: i64 = dsl_read(fd, buf, 4095)
+        dsl_close(fd)
+        if total <= 0:
+            Memory.free(buf)
+            return 0
+        n: i32 = 0
+        i: i64 = 0
+        while i < total:
+            b: i8 = Memory.read_i8(buf + i)
+            if b == 0:
+                n = n + 1
+            i = i + 1
+        Memory.free(buf)
+        return n
+
+    # Get argument at index (0 = program name)
+    # Returns "" if out of bounds
+    static fun get(index: i32) -> str:
+        fd: i32 = dsl_open("/proc/self/cmdline", 0, 0)
+        if fd < 0:
+            return ""
+        buf: i64 = Memory.malloc(4096)
+        total: i64 = dsl_read(fd, buf, 4095)
+        dsl_close(fd)
+        if total <= 0:
+            Memory.free(buf)
+            return ""
+        Memory.write_i8(buf + total, 0 as i8)
+        n: i32 = 0
+        i: i64 = 0
+        while i < total:
+            if n == index:
+                # Found the argument — measure its length
+                arg_start: i64 = i
+                while i < total:
+                    b: i8 = Memory.read_i8(buf + i)
+                    if b == 0:
+                        break
+                    i = i + 1
+                arg_len: i64 = i - arg_start
+                result: i64 = Memory.malloc(arg_len + 1)
+                Memory.copy(result, buf + arg_start, arg_len)
+                Memory.write_i8(result + arg_len, 0 as i8)
+                Memory.free(buf)
+                return result as str
+            # Skip to next \0
+            while i < total:
+                b: i8 = Memory.read_i8(buf + i)
+                if b == 0:
+                    break
+                i = i + 1
+            i = i + 1
+            n = n + 1
+        Memory.free(buf)
+        return ""

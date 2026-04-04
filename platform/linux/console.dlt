@@ -2,7 +2,7 @@
 # Console - Input operations (Linux — raw read syscall, NO libc)
 # ============================================================================
 
-requires sys/linux/syscalls
+requires platform/linux/syscalls
 
 struct Console:
     static fun input(prompt: str) -> str:
