@@ -1,0 +1,32 @@
+# ============================================================================
+# Process - Process execution (Linux — raw fork/execve/waitpid, NO libc)
+# ============================================================================
+
+requires sys/linux/syscalls
+
+struct Process:
+    # Run a shell command via /bin/sh -c
+    # Returns: exit code (0 = success)
+    static fun run(command: str) -> i32:
+        pid: i32 = dsl_fork()
+        if pid == 0:
+            # Child: exec /bin/sh -c "command"
+            argv: i64 = dsl_malloc(32)
+            sh: str = "/bin/sh"
+            flag: str = "-c"
+            Memory.write_i64(argv, sh as i64)
+            Memory.write_i64(argv + 8, flag as i64)
+            Memory.write_i64(argv + 16, command as i64)
+            Memory.write_i64(argv + 24, 0)
+            dsl_execve(sh, argv, 0)
+            dsl_exit(127)
+        if pid < 0:
+            return -1
+        # Parent: wait for child
+        status_buf: i64 = dsl_malloc(4)
+        dsl_waitpid(pid, status_buf, 0)
+        status: i32 = Memory.read_i32(status_buf)
+        dsl_free(status_buf)
+        # WEXITSTATUS = (status >> 8) & 0xFF
+        exit_code: i32 = (status / 256) as i32
+        return exit_code

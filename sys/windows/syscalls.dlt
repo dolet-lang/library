@@ -1,0 +1,8 @@
+# ============================================================================
+# Windows Syscalls — Unified entry point
+# On Windows, all system calls go through kernel32.dll
+# This file provides a platform-neutral name (syscalls.dlt) that the
+# bootstrap can load regardless of OS.
+# ============================================================================
+
+requires sys/windows/kernel32

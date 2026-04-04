@@ -1,0 +1,9 @@
+[info]
+name = linux
+description = Linux system libraries (libc, libm)
+version = 1.0.0
+
+[libs]
+# On Linux, libc and libm are the standard system libraries
+c = libc.so.6
+m = libm.so.6

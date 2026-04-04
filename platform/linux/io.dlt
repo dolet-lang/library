@@ -1,0 +1,18 @@
+# ============================================================================
+# IOOps - I/O operations (Linux — raw write syscall, NO libc)
+# ============================================================================
+
+requires sys/linux/syscalls
+
+struct IOOps:
+    # Print string with newline (stdout = fd 1)
+    static fun io_println(text: str):
+        text_len: i64 = Memory.strlen(text)
+        newline: str = "\n"
+        dsl_write(1, text as i64, text_len)
+        dsl_write(1, newline as i64, 1)
+
+    # Print string without newline
+    static fun io_print(text: str):
+        text_len: i64 = Memory.strlen(text)
+        dsl_write(1, text as i64, text_len)

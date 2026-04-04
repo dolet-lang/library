@@ -1,0 +1,25 @@
+# ============================================================================
+# Console - Input operations (Linux — raw read syscall, NO libc)
+# ============================================================================
+
+requires sys/linux/syscalls
+
+struct Console:
+    static fun input(prompt: str) -> str:
+        prompt_len: i64 = Memory.strlen(prompt)
+        if prompt_len > 0:
+            dsl_write(1, prompt as i64, prompt_len)
+        buffer: i64 = dsl_malloc(4096)
+        # stdin = fd 0
+        bytes_read: i64 = dsl_read(0, buffer, 4095)
+        if bytes_read <= 0:
+            Memory.write_i8(buffer, 0 as i8)
+            return buffer as str
+        # Strip trailing newline
+        last: i64 = bytes_read - 1
+        c: i32 = Memory.read_i8(buffer + last) as i32
+        if c == 10:
+            Memory.write_i8(buffer + last, 0 as i8)
+        else:
+            Memory.write_i8(buffer + bytes_read, 0 as i8)
+        return buffer as str

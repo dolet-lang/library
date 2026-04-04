@@ -1,0 +1,55 @@
+# ============================================================================
+# Net - Network operations (Linux — raw socket syscalls, NO libc)
+# ============================================================================
+
+requires sys/linux/syscalls
+
+struct NetOps:
+    static fun net_socket_create() -> i32:
+        # AF_INET=2, SOCK_STREAM=1, protocol=0
+        return dsl_socket(2, 1, 0)
+
+    static fun net_socket_bind(sockfd: i32, addr: str, port: i32) -> i32:
+        sa: i64 = dsl_calloc(1, 16)
+        # sin_family = AF_INET (2)
+        Memory.write_i8(sa, 2 as i8)
+        Memory.write_i8(sa + 1, 0 as i8)
+        # sin_port (network byte order)
+        port_n: i32 = dsl_htons(port)
+        Memory.write_i8(sa + 2, (port_n / 256) as i8)
+        Memory.write_i8(sa + 3, (port_n) as i8)
+        # sin_addr — parse dotted IP manually
+        # For "0.0.0.0" → INADDR_ANY = 0
+        Memory.write_i32(sa + 4, 0)
+        result: i32 = dsl_bind(sockfd, sa, 16)
+        dsl_free(sa)
+        return result
+
+    static fun net_socket_listen(sockfd: i32, backlog: i32) -> i32:
+        return dsl_listen(sockfd, backlog)
+
+    static fun net_socket_accept(sockfd: i32) -> i32:
+        return dsl_accept(sockfd, 0, 0)
+
+    static fun net_socket_send(sockfd: i32, data: str, len: i32) -> i32:
+        result: i64 = dsl_send(sockfd, data as i64, len as i64, 0)
+        return result as i32
+
+    static fun net_socket_recv(sockfd: i32, buffer: i64, len: i32) -> i32:
+        result: i64 = dsl_recv(sockfd, buffer, len as i64, 0)
+        return result as i32
+
+    static fun net_socket_close(sockfd: i32):
+        dsl_close(sockfd)
+
+    static fun net_socket_connect(sockfd: i32, addr: str, port: i32) -> i32:
+        sa: i64 = dsl_calloc(1, 16)
+        Memory.write_i8(sa, 2 as i8)
+        Memory.write_i8(sa + 1, 0 as i8)
+        port_n: i32 = dsl_htons(port)
+        Memory.write_i8(sa + 2, (port_n / 256) as i8)
+        Memory.write_i8(sa + 3, (port_n) as i8)
+        Memory.write_i32(sa + 4, 0)
+        result: i32 = dsl_connect(sockfd, sa, 16)
+        dsl_free(sa)
+        return result

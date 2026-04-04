@@ -1,0 +1,25 @@
+# ============================================================================
+# Alloc - Heap allocation (Linux — mmap-based, NO libc)
+# ============================================================================
+
+requires sys/linux/syscalls
+
+extend Memory:
+    # Allocate uninitialized memory
+    static fun malloc(size: i64) -> ptr:
+        result: i64 = dsl_malloc(size)
+        return result as ptr
+
+    # Allocate zero-initialized memory
+    static fun malloc_zeroed(size: i64) -> i64:
+        return dsl_calloc(1, size)
+
+    # Reallocate memory block
+    static fun realloc(mem_ptr: i64, new_size: i64) -> i64:
+        return dsl_realloc(mem_ptr, new_size)
+
+    # Free allocated memory
+    static fun free(mem_ptr: i64):
+        if mem_ptr == 0:
+            return
+        dsl_free(mem_ptr)

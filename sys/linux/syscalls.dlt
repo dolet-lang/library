@@ -1,0 +1,70 @@
+# ============================================================================
+# Linux Raw Syscall Bindings (Pure — NO libc dependency)
+# All functions are implemented in runtime_helpers.ll using the `syscall`
+# instruction directly. This is the Linux equivalent of kernel32.dlt.
+#
+# Syscall numbers (x86_64):
+#   read=0, write=1, open=2, close=3, lseek=8, mmap=9, munmap=11,
+#   nanosleep=35, getpid=39, socket=41, connect=42, accept=43,
+#   sendto=44, recvfrom=45, bind=49, listen=50, setsockopt=54,
+#   fork=57, execve=59, exit=60, wait4=61, getcwd=79, readlink=89,
+#   clock_gettime=228
+# ============================================================================
+
+# Raw syscall dispatchers (for advanced use)
+extern:
+    fun dsl_syscall1(nr: i64, a1: i64) -> i64
+    fun dsl_syscall2(nr: i64, a1: i64, a2: i64) -> i64
+    fun dsl_syscall3(nr: i64, a1: i64, a2: i64, a3: i64) -> i64
+    fun dsl_syscall4(nr: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64
+    fun dsl_syscall6(nr: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64) -> i64
+
+# I/O
+extern:
+    fun dsl_write(fd: i32, buf: i64, count: i64) -> i64
+    fun dsl_read(fd: i32, buf: i64, count: i64) -> i64
+
+# File operations
+extern:
+    fun dsl_open(path: str, flags: i32, mode: i32) -> i32
+    fun dsl_close(fd: i32) -> i32
+    fun dsl_lseek(fd: i32, offset: i64, whence: i32) -> i64
+
+# Memory (mmap-based, no libc)
+extern:
+    fun dsl_mmap(addr: i64, len: i64, prot: i32, flags: i32, fd: i32, offset: i64) -> i64
+    fun dsl_munmap(addr: i64, len: i64) -> i32
+    fun dsl_malloc(size: i64) -> i64
+    fun dsl_calloc(count: i64, size: i64) -> i64
+    fun dsl_free(ptr: i64)
+    fun dsl_realloc(old_ptr: i64, new_size: i64) -> i64
+
+# Process
+extern:
+    fun dsl_exit(code: i32)
+    fun dsl_getpid() -> i32
+    fun dsl_getcwd(buf: i64, size: i64) -> i64
+    fun dsl_fork() -> i32
+    fun dsl_execve(path: str, argv: i64, envp: i64) -> i32
+    fun dsl_waitpid(pid: i32, status: i64, options: i32) -> i32
+
+# Path
+extern:
+    fun dsl_readlink(path: str, buf: i64, bufsize: i64) -> i64
+
+# Time
+extern:
+    fun dsl_clock_gettime(clk_id: i32, tp: i64) -> i32
+    fun dsl_nanosleep(req: i64, rem: i64) -> i32
+
+# Network (sockets)
+extern:
+    fun dsl_socket(domain: i32, sock_type: i32, protocol: i32) -> i32
+    fun dsl_bind(fd: i32, addr: i64, addrlen: i32) -> i32
+    fun dsl_listen(fd: i32, backlog: i32) -> i32
+    fun dsl_accept(fd: i32, addr: i64, addrlen: i64) -> i32
+    fun dsl_connect(fd: i32, addr: i64, addrlen: i32) -> i32
+    fun dsl_send(fd: i32, buf: i64, len: i64, flags: i32) -> i64
+    fun dsl_recv(fd: i32, buf: i64, len: i64, flags: i32) -> i64
+    fun dsl_setsockopt(fd: i32, level: i32, optname: i32, optval: i64, optlen: i32) -> i32
+    fun dsl_htons(val: i32) -> i32

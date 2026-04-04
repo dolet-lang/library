@@ -1,0 +1,71 @@
+# ============================================================================
+# File - File I/O (Linux — raw open/read/write/close syscalls, NO libc)
+# ============================================================================
+
+requires sys/linux/syscalls
+
+# Open flags
+# O_RDONLY = 0, O_WRONLY = 1, O_RDWR = 2
+# O_CREAT = 64, O_TRUNC = 512, O_APPEND = 1024
+
+struct File:
+    handle: i32
+
+    static fun open(filename: str, mode: str) -> File:
+        resolved_path: str = PathOps.resolve_from_exe(filename)
+        flags: i32 = 0
+        # "r" = O_RDONLY(0), "w" = O_WRONLY|O_CREAT|O_TRUNC(577), "a" = O_WRONLY|O_CREAT|O_APPEND(1089)
+        m: i32 = Memory.read_i8(mode as i64) as i32
+        if m == 119:
+            flags = 577
+        if m == 97:
+            flags = 1089
+        fd: i32 = dsl_open(resolved_path, flags, 420)
+        if fd < 0:
+            IOOps.io_println("Error: Failed to open file!")
+            IOOps.io_println(filename)
+        result: File = File(handle=fd)
+        return result
+
+    static fun open_cwd(filename: str, mode: str) -> File:
+        flags: i32 = 0
+        m: i32 = Memory.read_i8(mode as i64) as i32
+        if m == 119:
+            flags = 577
+        if m == 97:
+            flags = 1089
+        fd: i32 = dsl_open(filename, flags, 420)
+        if fd < 0:
+            IOOps.io_println("Error: Failed to open file!")
+            IOOps.io_println(filename)
+        result: File = File(handle=fd)
+        return result
+
+    static fun read_all(f: File) -> str:
+        if f.handle < 0:
+            return ""
+        # Seek to end to get size
+        file_size: i64 = dsl_lseek(f.handle, 0, 2)
+        # Seek back to beginning
+        dsl_lseek(f.handle, 0, 0)
+        if file_size <= 0:
+            return ""
+        buffer: i64 = dsl_malloc(file_size + 1)
+        if buffer == 0:
+            return ""
+        bytes_read: i64 = dsl_read(f.handle, buffer, file_size)
+        Memory.write_i8(buffer + bytes_read, 0 as i8)
+        return buffer as str
+
+    static fun write_str(f: File, text: str):
+        if f.handle < 0:
+            return
+        text_len: i64 = Memory.strlen(text)
+        dsl_write(f.handle, text as i64, text_len)
+
+    static fun close(f: File):
+        if f.handle >= 0:
+            dsl_close(f.handle)
+
+    static fun is_open(f: File) -> bool:
+        return f.handle >= 0

@@ -1,0 +1,33 @@
+# ============================================================================
+# Time - Time operations (Linux — raw clock_gettime/nanosleep, NO libc)
+# ============================================================================
+
+requires sys/linux/syscalls
+
+struct Time:
+    static fun sleep(ms: i32):
+        # struct timespec { tv_sec: i64, tv_nsec: i64 }
+        ts: i64 = dsl_malloc(16)
+        sec: i64 = (ms / 1000) as i64
+        nsec: i64 = ((ms - ((ms / 1000) * 1000)) * 1000000) as i64
+        Memory.write_i64(ts, sec)
+        Memory.write_i64(ts + 8, nsec)
+        dsl_nanosleep(ts, 0)
+        dsl_free(ts)
+
+    static fun millis() -> i64:
+        ts: i64 = dsl_malloc(16)
+        # CLOCK_MONOTONIC = 1
+        dsl_clock_gettime(1, ts)
+        sec: i64 = Memory.read_i64(ts)
+        nsec: i64 = Memory.read_i64(ts + 8)
+        dsl_free(ts)
+        return (sec * 1000) + (nsec / 1000000)
+
+    static fun micros() -> i64:
+        ts: i64 = dsl_malloc(16)
+        dsl_clock_gettime(1, ts)
+        sec: i64 = Memory.read_i64(ts)
+        nsec: i64 = Memory.read_i64(ts + 8)
+        dsl_free(ts)
+        return (sec * 1000000) + (nsec / 1000)
