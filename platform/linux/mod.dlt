@@ -1,0 +1,18 @@
+module sys.linux
+load platform/linux/syscalls
+load platform/linux/alloc
+load platform/linux/format
+load platform/linux/str
+load platform/linux/io
+load platform/linux/file
+load platform/linux/path
+load platform/linux/args
+load platform/linux/process
+
+# Selective import mappings for this platform
+expose platform/linux/str as string
+expose platform/linux/format as format
+expose platform/linux/alloc as alloc
+expose platform/linux/syscalls as kernel
+expose platform/linux/file as file
+expose platform/linux/path as path

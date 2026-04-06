@@ -1,5 +1,21 @@
 module sys.windows
 load platform/windows/kernel32
+load platform/windows/alloc
+load platform/windows/format
+load platform/windows/str
+load platform/windows/io
+load platform/windows/file
+load platform/windows/path
+load platform/windows/args
+load platform/windows/process
+
+# Selective import mappings for this platform
+expose platform/windows/str as string
+expose platform/windows/format as format
+expose platform/windows/alloc as alloc
+expose platform/windows/kernel32 as kernel
+expose platform/windows/file as file
+expose platform/windows/path as path
 
 # Exported symbols (FFI)
 export Sleep

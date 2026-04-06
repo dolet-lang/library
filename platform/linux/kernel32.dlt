@@ -1,0 +1,9 @@
+# ============================================================================
+# Linux "kernel32" — Platform Compatibility Shim
+# ============================================================================
+# This file exists so that std/mod.dlt can use "load platform/{platform}/kernel32"
+# uniformly across all platforms. On Linux, the real native bindings live in
+# syscalls.dlt (raw Linux syscalls via runtime_helpers).
+# ============================================================================
+
+requires platform/linux/syscalls

@@ -1,26 +1,11 @@
 module std
-load platform/windows/kernel32
-load platform/windows/alloc
-load platform/windows/format
-load platform/windows/str
-load platform/windows/io
 load std/io
-load platform/windows/file
-load platform/windows/path
-load platform/windows/args
-load platform/windows/process
 load core/types/collections
 load std/fileIO
 
-# Selective import mapping — import std.<name>
-expose platform/windows/str as string
+# Selective import mapping — platform-neutral
 expose std/io as io
-expose platform/windows/format as format
 expose core/types/collections as collections
-expose platform/windows/alloc as alloc
-expose platform/windows/kernel32 as kernel
-expose platform/windows/file as file
-expose platform/windows/path as path
 
 # Exported symbols — public API
 export Memory
