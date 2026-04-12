@@ -346,7 +346,8 @@ define i32 @dsl_htons(i32 %val) nounwind {
   %low = and i32 %val, 255
   %high = lshr i32 %val, 8
   %high_masked = and i32 %high, 255
-  %swapped = or i32 (shl i32 %low, 8), %high_masked
+  %low_shifted = shl i32 %low, 8
+  %swapped = or i32 %low_shifted, %high_masked
   ret i32 %swapped
 }
 
