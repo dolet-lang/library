@@ -22,3 +22,7 @@ EXPORTS
     Ellipse
     CreatePen
     CreateBrushIndirect
+    SetDIBitsToDevice
+    StretchDIBits
+    CreateDIBSection
+    SetBkMode

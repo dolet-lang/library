@@ -8,6 +8,7 @@ EXPORTS
     ShowCursor
     SetCursorPos
     GetCursorPos
+    ScreenToClient
     ClipCursor
     GetWindowRect
     GetClientRect
