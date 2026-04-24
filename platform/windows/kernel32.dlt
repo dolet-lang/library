@@ -16,6 +16,7 @@ extern lib "kernel32":
     fun HeapAlloc(hHeap: i64, dwFlags: i32, dwBytes: i64) -> i64
     fun HeapReAlloc(hHeap: i64, dwFlags: i32, lpMem: i64, dwBytes: i64) -> i64
     fun HeapFree(hHeap: i64, dwFlags: i32, lpMem: i64) -> i32
+    fun HeapSize(hHeap: i64, dwFlags: i32, lpMem: i64) -> i64
     fun CreateFileA(lpFileName: str, dwDesiredAccess: i32, dwShareMode: i32, lpSecurityAttributes: i64, dwCreationDisposition: i32, dwFlagsAndAttributes: i32, hTemplateFile: i64) -> i64
     fun CloseHandle(hObject: i64) -> i32
     fun ReadFile(hFile: i64, lpBuffer: i64, nNumberOfBytesToRead: i32, lpNumberOfBytesRead: i64, lpOverlapped: i64) -> i32

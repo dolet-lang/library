@@ -1,0 +1,197 @@
+# ============================================================================
+# Compiler-known string builtins.
+#
+# The compiler lowers the `+` operator on strs to `_str_plus`. Return
+# paths that escape the current function's arena are wrapped with
+# `_str_promote_return`. Assignments to globals / heap-reachable fields
+# are wrapped with `_str_heap_dupe`. Explicit `mut str` rebinds that
+# need to free a heap-dupe value use `_str_heap_free`.
+#
+# All arena-backed functions call into library/core/arena.dlt.
+# The heap-backed ones call Memory.malloc / Memory.free.
+# ============================================================================
+
+# Arena-backed concat (the operator `+` on str lowers to this).
+fun _str_plus(a: str, b: str) -> str:
+    len1: i64 = Memory.strlen(a)
+    len2: i64 = Memory.strlen(b)
+    total: i64 = len1 + len2
+    result: i64 = _scope_arena_alloc(total + 1)
+    if result == 0:
+        # Arena exhausted — fall back to heap so the call still works.
+        result = Memory.malloc(total + 1) as i64
+    Memory.copy(result, a as i64, len1)
+    Memory.copy(result + len1, b as i64, len2 + 1)
+    return result as str
+
+# Arena-backed copy of an arbitrary str (literal, heap, or arena).
+fun _str_dupe(a: str) -> str:
+    len: i64 = Memory.strlen(a)
+    result: i64 = _scope_arena_alloc(len + 1)
+    if result == 0:
+        result = Memory.malloc(len + 1) as i64
+    Memory.copy(result, a as i64, len + 1)
+    return result as str
+
+# Heap-backed copy (compiler inserts when a str escapes to a global
+# or to a struct field of a heap-allocated object).
+fun _str_heap_dupe(a: str) -> str:
+    len: i64 = Memory.strlen(a)
+    result: i64 = Memory.malloc(len + 1) as i64
+    Memory.copy(result, a as i64, len + 1)
+    return result as str
+
+# Heap free (named helper so the compiler can emit it without
+# hard-coding Memory.free in IR text).
+fun _str_heap_free(p: str):
+    Memory.free(p as i64)
+
+# ---------------------------------------------------------------
+# Arena-backed integer/float/bool formatters.
+# The compiler (codegen_access.gen_fun_call) rewrites calls to
+# Convert.*_to_str into these whenever g_arena_emit == 1, so users
+# keep writing `Convert.i32_to_str(n)` and get arena semantics for
+# free inside bracketed functions / while-loop iterations / main.
+# ---------------------------------------------------------------
+
+fun _arena_i32_to_str(value: i32) -> str:
+    if value == 0:
+        r0: i64 = _scope_arena_alloc(2)
+        if r0 == 0:
+            r0 = Memory.malloc(2) as i64
+        Memory.write_i8(r0, 48 as i8)
+        Memory.write_i8(r0 + 1, 0 as i8)
+        return r0 as str
+
+    # Max signed i32 = 10 digits + optional '-' + NUL = 12 bytes.
+    buffer: i64 = _scope_arena_alloc(12)
+    if buffer == 0:
+        buffer = Memory.malloc(12) as i64
+    pos: i64 = 0
+    is_neg: bool = value < 0
+    n: i64 = value as i64
+    if is_neg:
+        n = 0 - n
+
+    # temp digits written right-to-left into a 12-byte scratch
+    temp_buf: i64 = _scope_arena_alloc(12)
+    if temp_buf == 0:
+        temp_buf = Memory.malloc(12) as i64
+    digit_count: i64 = 0
+    digit: i64 = 0
+    ch: i8 = 0 as i8
+    while n > 0:
+        digit = n - ((n / 10) * 10)
+        ch = (digit as i32 + 48) as i8
+        Memory.write_i8(temp_buf + digit_count, ch)
+        n = n / 10
+        digit_count = digit_count + 1
+
+    if is_neg:
+        Memory.write_i8(buffer + pos, 45 as i8)
+        pos = pos + 1
+
+    idx: i64 = digit_count - 1
+    cc: i8 = 0 as i8
+    while idx >= 0:
+        cc = Memory.read_i8(temp_buf + idx)
+        Memory.write_i8(buffer + pos, cc)
+        pos = pos + 1
+        idx = idx - 1
+    Memory.write_i8(buffer + pos, 0 as i8)
+    # temp_buf is in the arena — no free needed; pop reclaims it.
+    return buffer as str
+
+fun _arena_i64_to_str(value: i64) -> str:
+    if value == 0:
+        r0: i64 = _scope_arena_alloc(2)
+        if r0 == 0:
+            r0 = Memory.malloc(2) as i64
+        Memory.write_i8(r0, 48 as i8)
+        Memory.write_i8(r0 + 1, 0 as i8)
+        return r0 as str
+
+    buffer: i64 = _scope_arena_alloc(21)
+    if buffer == 0:
+        buffer = Memory.malloc(21) as i64
+    pos: i64 = 0
+    is_neg: bool = value < 0
+    n: i64 = value
+    if is_neg:
+        n = 0 - n
+
+    temp_buf: i64 = _scope_arena_alloc(21)
+    if temp_buf == 0:
+        temp_buf = Memory.malloc(21) as i64
+    digit_count: i64 = 0
+    digit: i64 = 0
+    ch: i8 = 0 as i8
+    while n > 0:
+        digit = n - ((n / 10) * 10)
+        ch = (digit as i32 + 48) as i8
+        Memory.write_i8(temp_buf + digit_count, ch)
+        n = n / 10
+        digit_count = digit_count + 1
+
+    if is_neg:
+        Memory.write_i8(buffer + pos, 45 as i8)
+        pos = pos + 1
+
+    idx: i64 = digit_count - 1
+    cc: i8 = 0 as i8
+    while idx >= 0:
+        cc = Memory.read_i8(temp_buf + idx)
+        Memory.write_i8(buffer + pos, cc)
+        pos = pos + 1
+        idx = idx - 1
+    Memory.write_i8(buffer + pos, 0 as i8)
+    return buffer as str
+
+fun _arena_bool_to_str(value: bool) -> str:
+    if value:
+        r: i64 = _scope_arena_alloc(5)
+        if r == 0:
+            r = Memory.malloc(5) as i64
+        Memory.write_i8(r,     116 as i8)
+        Memory.write_i8(r + 1, 114 as i8)
+        Memory.write_i8(r + 2, 117 as i8)
+        Memory.write_i8(r + 3, 101 as i8)
+        Memory.write_i8(r + 4, 0 as i8)
+        return r as str
+    f: i64 = _scope_arena_alloc(6)
+    if f == 0:
+        f = Memory.malloc(6) as i64
+    Memory.write_i8(f,     102 as i8)
+    Memory.write_i8(f + 1,  97 as i8)
+    Memory.write_i8(f + 2, 108 as i8)
+    Memory.write_i8(f + 3, 115 as i8)
+    Memory.write_i8(f + 4, 101 as i8)
+    Memory.write_i8(f + 5,   0 as i8)
+    return f as str
+
+# Return-path promotion — called BEFORE a str-returning function's
+# epilogue. Copies `val` down to `caller_handle` (the arena cursor the
+# caller had when it invoked us) and updates the arena cursor so the
+# string survives our `_scope_arena_pop`. The compiler skips the pop
+# when it emits this.
+#
+# Safety: the copy loop walks byte-by-byte. If `val` points into our
+# callee region (val > caller_handle) the destination is lower in memory
+# than the source, so a forward copy never overwrites unread bytes.
+# If `val` points below caller_handle (caller's region, literal, heap),
+# the copy reads a different region than it writes — also safe.
+fun _str_promote_return(val: str, caller_handle: i64) -> str:
+    len: i64 = Memory.strlen(val)
+    # Reset cursor to just past caller_handle and reserve exactly len+1.
+    g_arena_cursor = caller_handle
+    dest: i64 = _scope_arena_alloc(len + 1)
+    if dest == 0:
+        # Arena exhausted on the way up — fall back to heap. The
+        # returned pointer will live independently of the arena.
+        dest = Memory.malloc(len + 1) as i64
+    # Byte-by-byte copy is always safe here; see note above.
+    i: i64 = 0
+    while i <= len:
+        Memory.write_i8(dest + i, Memory.read_i8((val as i64) + i))
+        i = i + 1
+    return dest as str

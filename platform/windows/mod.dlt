@@ -26,6 +26,7 @@ export GetProcessHeap
 export HeapAlloc
 export HeapReAlloc
 export HeapFree
+export HeapSize
 export CreateFileA
 export CloseHandle
 export ReadFile

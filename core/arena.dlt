@@ -1,0 +1,71 @@
+# ============================================================================
+# ScopeArena — per-function bump allocator for transient strings.
+#
+# Layout (single growable buffer for v1):
+#   g_arena_base     — start of the one backing buffer (lazy init)
+#   g_arena_cursor   — next free byte
+#   g_arena_capacity — size of the buffer
+#
+# Compiler contract (see codegen_decl.dlt + codegen_stmt.dlt):
+#   Every function body is bracketed with
+#       %h = _scope_arena_push()
+#       ... body ...
+#       _scope_arena_pop(%h)              (non-str-returning functions)
+#     or
+#       %promoted = _str_promote_return(%ret, %h)
+#       llvm.return %promoted             (str-returning functions — skip pop)
+#
+# The push saves the CURRENT cursor; pop restores it. Every allocation
+# between push and pop is effectively freed by one cursor assignment.
+#
+# v1 uses a single 16 MiB buffer backed by Memory.malloc. On overflow the
+# alloc returns 0 (caller must handle — at present _str_plus ignores and
+# returns a bad pointer; this is acceptable for v1 because 16 MiB is
+# more than enough for any practical frame). Bare-metal / chunked growth
+# is a later step and does not require touching this file — only
+# Memory.malloc needs a bare-metal backing (which is how it already works).
+# ============================================================================
+
+g_arena_base:     i64 = 0
+g_arena_cursor:   i64 = 0
+g_arena_capacity: i64 = 0
+
+fun _scope_arena_init():
+    if g_arena_base != 0:
+        return
+    g_arena_capacity = 16777216        # 16 MiB — generous default
+    g_arena_base = Memory.malloc(g_arena_capacity) as i64
+    g_arena_cursor = g_arena_base
+
+fun _scope_arena_push() -> i64:
+    _scope_arena_init()
+    return g_arena_cursor
+
+fun _scope_arena_pop(handle: i64):
+    # Discards every byte allocated since the matching push.
+    if handle == 0:
+        return
+    g_arena_cursor = handle
+
+fun _scope_arena_alloc(size: i64) -> i64:
+    _scope_arena_init()
+    if size <= 0:
+        return g_arena_cursor
+    # 8-byte align
+    aligned: i64 = (size + 7) & (0 - 8)
+    result: i64 = g_arena_cursor
+    new_cursor: i64 = g_arena_cursor + aligned
+    # Overflow check — caller is expected to detect 0 and fall back
+    if new_cursor > g_arena_base + g_arena_capacity:
+        return 0
+    g_arena_cursor = new_cursor
+    return result
+
+# Diagnostic helpers (useful for probes + tests).
+fun _scope_arena_used() -> i64:
+    if g_arena_base == 0:
+        return 0
+    return g_arena_cursor - g_arena_base
+
+fun _scope_arena_capacity() -> i64:
+    return g_arena_capacity

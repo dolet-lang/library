@@ -4,6 +4,7 @@ EXPORTS
     HeapAlloc
     HeapFree
     HeapReAlloc
+    HeapSize
     GetStdHandle
     WriteFile
     WriteConsoleA

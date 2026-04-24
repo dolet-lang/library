@@ -1,5 +1,7 @@
 module core
 load core/memory
+load core/arena
+load core/str_ops
 load core/types/integers
 load core/types/floats
 load core/types/primitives

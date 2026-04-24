@@ -6,22 +6,33 @@ requires platform/windows/kernel32
 # Memory.realloc(ptr, size), and Memory.free(ptr) become available.
 # ============================================================================
 
+g_alloc_malloc_count: i64 = 0
+g_alloc_free_count:   i64 = 0
+g_alloc_malloc_bytes: i64 = 0
+g_alloc_free_bytes:   i64 = 0
+
 extend Memory:
     # Allocate uninitialized memory
     static fun malloc(size: i64) -> ptr:
         heap: i64 = GetProcessHeap()
         result: i64 = HeapAlloc(heap, 0, size)
+        g_alloc_malloc_count = g_alloc_malloc_count + 1
+        g_alloc_malloc_bytes = g_alloc_malloc_bytes + size
         return result as ptr
 
     # Allocate zero-initialized memory
     static fun malloc_zeroed(size: i64) -> i64:
         heap: i64 = GetProcessHeap()
+        g_alloc_malloc_count = g_alloc_malloc_count + 1
+        g_alloc_malloc_bytes = g_alloc_malloc_bytes + size
         return HeapAlloc(heap, 8, size)
 
     # Reallocate memory block
     static fun realloc(mem_ptr: i64, new_size: i64) -> i64:
         heap: i64 = GetProcessHeap()
         if mem_ptr == 0:
+            g_alloc_malloc_count = g_alloc_malloc_count + 1
+            g_alloc_malloc_bytes = g_alloc_malloc_bytes + new_size
             return HeapAlloc(heap, 0, new_size)
         return HeapReAlloc(heap, 0, mem_ptr, new_size)
 
@@ -31,3 +42,28 @@ extend Memory:
             return
         heap: i64 = GetProcessHeap()
         HeapFree(heap, 0, mem_ptr)
+        g_alloc_free_count = g_alloc_free_count + 1
+
+    # Diagnostic: total malloc calls since process start
+    static fun malloc_count() -> i64:
+        return g_alloc_malloc_count
+
+    # Diagnostic: total free calls since process start
+    static fun free_count() -> i64:
+        return g_alloc_free_count
+
+    # Diagnostic: net outstanding allocations (malloc - free)
+    static fun alloc_balance() -> i64:
+        return g_alloc_malloc_count - g_alloc_free_count
+
+    # Diagnostic: total bytes allocated
+    static fun malloc_bytes() -> i64:
+        return g_alloc_malloc_bytes
+
+    # Diagnostic: total bytes freed
+    static fun free_bytes() -> i64:
+        return g_alloc_free_bytes
+
+    # Diagnostic: net bytes held by live allocations
+    static fun bytes_held() -> i64:
+        return g_alloc_malloc_bytes - g_alloc_free_bytes
