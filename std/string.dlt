@@ -2,12 +2,28 @@
 # String extension methods for the str type
 # Usage: import string.dlt
 # Now uses Pure Dolet Str struct from runtime.dlt
+#
+# ## Concat policy — read this before using string concatenation
+#
+# Prefer `a + b` or `a.concat(b)` for string concatenation. Both forms
+# are compiler-dispatched to an arena-backed builtin (`_str_plus`) when
+# used inside a bracketed scope (while body, if body, function body
+# that doesn't return str), which means the intermediate result is
+# freed automatically when the scope exits — no leak, no manual free.
+#
+# Never call `Str.concat()` (the static-method form on the `Str`
+# struct) from user code. It always allocates on the heap and the
+# caller is responsible for `Memory.free` on the result. Forgetting
+# that single free is the exact bug that leaked in every recent
+# reported case. `Str.concat()` exists for compiler internals and
+# for the rare case where you genuinely want a long-lived heap
+# string and will manage its lifetime yourself.
 
 extend str:
     """Get the length of the string"""
     fun length(self) -> i64:
         return Memory.strlen(self)
-    
+
     """Convert string to uppercase (Pure Dolet)"""
     fun to_upper(self) -> str:
         return Str.to_upper(self)
@@ -35,4 +51,14 @@ extend str:
     """Extract a substring from start to end index (Pure Dolet)"""
     fun substring(self, start: i64, end: i64) -> str:
         return Str.substring(self, start, end)
+
+    """Concatenate two strings. Equivalent to `self + other`. Inside a
+    bracketed scope the compiler dispatches this call directly to
+    `_str_plus` (arena-backed, freed on the next pop); outside one it
+    falls back to the heap `Str_concat`. Use this whenever you want
+    method-chain syntax instead of the `+` operator. Never use
+    `Str.concat()` (the static form) in user code: it always
+    heap-allocates and the caller must remember to Memory.free."""
+    fun concat(self, other: str) -> str:
+        return self + other
 
