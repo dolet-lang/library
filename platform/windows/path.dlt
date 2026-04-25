@@ -110,9 +110,17 @@ struct PathOps:
         
         # Null terminate
         Memory.write_i8(buffer + (length as i64), 0 as i8)
-        
+
         return buffer as str
-    
+
+    # Check if a file or directory exists at the given path.
+    # Returns 1 if exists, 0 if not (or on access error).
+    static fun exists(path: str) -> i32:
+        attrs: i32 = GetFileAttributesA(path)
+        if attrs == -1:
+            return 0
+        return 1
+
     # Resolve path to absolute path
     # Handles relative paths, ./ and .. segments
     # Returns: absolute path string

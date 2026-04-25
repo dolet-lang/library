@@ -50,7 +50,20 @@
 #   - Capture buffer max = 1MB
 # ============================================================================
 
+# Captured result of a process run — exit code, stdout, stderr.
+# Returned by Process.run_output() / System.Command.output().
+struct Output:
+    code: i32
+    stdout: str
+    stderr: str
+
 struct Process:
+    # ==========================================================
+    # exit() - Terminate the current process with the given code.
+    # ==========================================================
+    static fun exit(code: i32):
+        ExitProcess(code)
+
     # ==========================================================
     # run() - Execute command, inherit console, return exit code
     # ==========================================================
@@ -114,38 +127,53 @@ struct Process:
         
         read_h: i64 = Memory.read_i64(read_h_ptr)
         write_h: i64 = Memory.read_i64(write_h_ptr)
-        
+
         # Read handle should NOT be inherited by child
         SetHandleInformation(read_h, 1, 0)
-        
+
+        # Open NUL as an inheritable read handle for the child's stdin.
+        # When STARTF_USESTDHANDLES is set, hStdInput must be a valid
+        # handle — leaving it NULL deadlocks any child (or grandchild
+        # like `find` in `dir | find`) that reads from stdin.
+        # GENERIC_READ = 0x80000000 (-2147483648 as signed i32)
+        # OPEN_EXISTING = 3, FILE_ATTRIBUTE_NORMAL = 128
+        gen_read: i32 = 0 - 2147483648
+        null_in_h: i64 = CreateFileA("NUL", gen_read, 1, sa, 3, 128, 0)
+
         # --- Setup STARTUPINFOA with pipe ---
         si: i64 = Memory.malloc_zeroed(104)
         Memory.write_i32(si, 104)
         # dwFlags = STARTF_USESTDHANDLES (0x100)
         Memory.write_i32(si + 60, 256)
+        # hStdInput = NUL device (inheritable)
+        Memory.write_i64(si + 80, null_in_h)
         # hStdOutput = write end of pipe
         Memory.write_i64(si + 88, write_h)
         # hStdError = write end of pipe (capture errors too)
         Memory.write_i64(si + 96, write_h)
-        
+
         # --- PROCESS_INFORMATION ---
         pi: i64 = Memory.malloc_zeroed(24)
-        
+
         # --- CreateProcess with bInheritHandles=1 ---
         ok: i32 = CreateProcessA(0, command, 0, 0, 1, 0, 0, 0, si, pi)
-        
+
         if ok == 0:
             CloseHandle(read_h)
             CloseHandle(write_h)
+            CloseHandle(null_in_h)
             Memory.free(sa)
             Memory.free(read_h_ptr)
             Memory.free(write_h_ptr)
             Memory.free(si)
             Memory.free(pi)
             return ""
-        
-        # Close write end in parent so ReadFile gets EOF when child exits
+
+        # Close handles the parent no longer needs so ReadFile gets
+        # EOF as soon as every child copy is closed. Failing to close
+        # write_h here is the classic ReadFile-hangs-forever bug.
         CloseHandle(write_h)
+        CloseHandle(null_in_h)
         
         # --- Read stdout from pipe ---
         buf_max: i64 = 1048576
@@ -191,5 +219,204 @@ struct Process:
         Memory.free(pi)
         Memory.free(output_buf)
         Memory.free(bytes_read_ptr)
-        
+
         return result_str as str
+
+    # ==========================================================
+    # run_output() - Execute command, capture stdout AND stderr
+    # separately, return Output(code, stdout, stderr).
+    #
+    # Uses TWO pipes + PeekNamedPipe to drain both streams
+    # concurrently from a single thread; without this, a child
+    # that fills its stdout buffer before we read stderr (or vice
+    # versa) would deadlock.
+    # ==========================================================
+    static fun run_output(command: str) -> Output:
+        # Inheritable security attributes (write ends + NUL stdin
+        # need to be inheritable; read ends are stripped below).
+        sa: i64 = Memory.malloc_zeroed(24)
+        Memory.write_i32(sa, 24)
+        Memory.write_i32(sa + 16, 1)
+
+        # Two pipes: one for the child's stdout, one for stderr.
+        out_read_ptr: i64 = Memory.malloc_zeroed(8)
+        out_write_ptr: i64 = Memory.malloc_zeroed(8)
+        err_read_ptr: i64 = Memory.malloc_zeroed(8)
+        err_write_ptr: i64 = Memory.malloc_zeroed(8)
+
+        p1_ok: i32 = CreatePipe(out_read_ptr, out_write_ptr, sa, 0)
+        p2_ok: i32 = CreatePipe(err_read_ptr, err_write_ptr, sa, 0)
+
+        if p1_ok == 0 or p2_ok == 0:
+            Memory.free(sa)
+            Memory.free(out_read_ptr)
+            Memory.free(out_write_ptr)
+            Memory.free(err_read_ptr)
+            Memory.free(err_write_ptr)
+            return Output(code=-1, stdout="", stderr="")
+
+        out_read: i64 = Memory.read_i64(out_read_ptr)
+        out_write: i64 = Memory.read_i64(out_write_ptr)
+        err_read: i64 = Memory.read_i64(err_read_ptr)
+        err_write: i64 = Memory.read_i64(err_write_ptr)
+
+        # Read ends NOT inheritable — only the child should see
+        # the write ends.
+        SetHandleInformation(out_read, 1, 0)
+        SetHandleInformation(err_read, 1, 0)
+
+        # NUL stdin (inheritable) — same fix as run_capture.
+        gen_read: i32 = 0 - 2147483648
+        null_in_h: i64 = CreateFileA("NUL", gen_read, 1, sa, 3, 128, 0)
+
+        # STARTUPINFOA with stdin=NUL, stdout=out_write, stderr=err_write
+        si: i64 = Memory.malloc_zeroed(104)
+        Memory.write_i32(si, 104)
+        Memory.write_i32(si + 60, 256)
+        Memory.write_i64(si + 80, null_in_h)
+        Memory.write_i64(si + 88, out_write)
+        Memory.write_i64(si + 96, err_write)
+
+        pi: i64 = Memory.malloc_zeroed(24)
+
+        ok: i32 = CreateProcessA(0, command, 0, 0, 1, 0, 0, 0, si, pi)
+
+        if ok == 0:
+            CloseHandle(out_read)
+            CloseHandle(out_write)
+            CloseHandle(err_read)
+            CloseHandle(err_write)
+            CloseHandle(null_in_h)
+            Memory.free(sa)
+            Memory.free(out_read_ptr)
+            Memory.free(out_write_ptr)
+            Memory.free(err_read_ptr)
+            Memory.free(err_write_ptr)
+            Memory.free(si)
+            Memory.free(pi)
+            return Output(code=-1, stdout="", stderr="")
+
+        # Drop parent's copies of inheritable handles so EOF
+        # propagates as soon as the child closes its copies.
+        CloseHandle(out_write)
+        CloseHandle(err_write)
+        CloseHandle(null_in_h)
+
+        h_process: i64 = Memory.read_i64(pi)
+        h_thread: i64 = Memory.read_i64(pi + 8)
+
+        # Capture buffers — 1 MB each, matching run_capture.
+        buf_max: i64 = 1048576
+        out_buf: i64 = Memory.malloc_zeroed(buf_max + 1)
+        err_buf: i64 = Memory.malloc_zeroed(buf_max + 1)
+        out_total: i64 = 0
+        err_total: i64 = 0
+
+        bytes_read_ptr: i64 = Memory.malloc_zeroed(4)
+        avail_ptr: i64 = Memory.malloc_zeroed(4)
+        chunk: i32 = 4096
+
+        # Concurrent drain loop — peek both pipes, read what's
+        # available, sleep briefly when both are empty and the
+        # child is still alive.
+        looping: bool = true
+        while looping:
+            wait_status: i32 = WaitForSingleObject(h_process, 0)
+            proc_done: i32 = 0
+            if wait_status == 0:
+                proc_done = 1
+
+            # Peek + read stdout
+            Memory.write_i32(avail_ptr, 0)
+            PeekNamedPipe(out_read, 0, 0, 0, avail_ptr, 0)
+            out_avail: i32 = Memory.read_i32(avail_ptr)
+            if out_avail > 0:
+                if out_total < buf_max:
+                    to_read1: i32 = chunk
+                    if (out_total + (chunk as i64)) > buf_max:
+                        to_read1 = (buf_max - out_total) as i32
+                    Memory.write_i32(bytes_read_ptr, 0)
+                    ReadFile(out_read, out_buf + out_total, to_read1, bytes_read_ptr, 0)
+                    br1: i32 = Memory.read_i32(bytes_read_ptr)
+                    out_total = out_total + (br1 as i64)
+
+            # Peek + read stderr
+            Memory.write_i32(avail_ptr, 0)
+            PeekNamedPipe(err_read, 0, 0, 0, avail_ptr, 0)
+            err_avail: i32 = Memory.read_i32(avail_ptr)
+            if err_avail > 0:
+                if err_total < buf_max:
+                    to_read2: i32 = chunk
+                    if (err_total + (chunk as i64)) > buf_max:
+                        to_read2 = (buf_max - err_total) as i32
+                    Memory.write_i32(bytes_read_ptr, 0)
+                    ReadFile(err_read, err_buf + err_total, to_read2, bytes_read_ptr, 0)
+                    br2: i32 = Memory.read_i32(bytes_read_ptr)
+                    err_total = err_total + (br2 as i64)
+
+            if proc_done == 1 and out_avail == 0 and err_avail == 0:
+                looping = false
+            else:
+                if out_avail == 0 and err_avail == 0:
+                    Sleep(1)
+
+        # Final drain: ReadFile until each pipe returns 0/error,
+        # in case bytes arrived after our last peek.
+        draining_out: bool = true
+        while draining_out:
+            Memory.write_i32(bytes_read_ptr, 0)
+            d1_ok: i32 = ReadFile(out_read, out_buf + out_total, chunk, bytes_read_ptr, 0)
+            d1_n: i32 = Memory.read_i32(bytes_read_ptr)
+            if d1_ok == 0 or d1_n == 0:
+                draining_out = false
+            else:
+                out_total = out_total + (d1_n as i64)
+                if out_total >= buf_max:
+                    draining_out = false
+
+        draining_err: bool = true
+        while draining_err:
+            Memory.write_i32(bytes_read_ptr, 0)
+            d2_ok: i32 = ReadFile(err_read, err_buf + err_total, chunk, bytes_read_ptr, 0)
+            d2_n: i32 = Memory.read_i32(bytes_read_ptr)
+            if d2_ok == 0 or d2_n == 0:
+                draining_err = false
+            else:
+                err_total = err_total + (d2_n as i64)
+                if err_total >= buf_max:
+                    draining_err = false
+
+        Memory.write_i8(out_buf + out_total, 0 as i8)
+        Memory.write_i8(err_buf + err_total, 0 as i8)
+
+        # Exit code
+        exit_ptr: i64 = Memory.malloc_zeroed(4)
+        GetExitCodeProcess(h_process, exit_ptr)
+        exit_code: i32 = Memory.read_i32(exit_ptr)
+
+        # Trim raw buffers via Str.trim (heap-allocated copies that
+        # live in the returned struct's fields).
+        out_raw: str = out_buf as str
+        err_raw: str = err_buf as str
+        out_clean: str = Str.trim(out_raw)
+        err_clean: str = Str.trim(err_raw)
+
+        # Cleanup
+        CloseHandle(h_process)
+        CloseHandle(h_thread)
+        CloseHandle(out_read)
+        CloseHandle(err_read)
+        Memory.free(sa)
+        Memory.free(out_read_ptr)
+        Memory.free(out_write_ptr)
+        Memory.free(err_read_ptr)
+        Memory.free(err_write_ptr)
+        Memory.free(si)
+        Memory.free(pi)
+        Memory.free(out_buf)
+        Memory.free(err_buf)
+        Memory.free(bytes_read_ptr)
+        Memory.free(avail_ptr)
+        Memory.free(exit_ptr)
+
+        return Output(code=exit_code, stdout=out_clean, stderr=err_clean)

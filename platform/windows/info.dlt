@@ -1,0 +1,12 @@
+# info.dlt - Platform identification facade for Windows.
+#
+# This is the Windows implementation. The same struct (PlatformInfo)
+# is mirrored in library/platform/<other_os>/info.dlt so the std
+# layer can call PlatformInfo.name() without knowing which OS it
+# is building for.
+
+struct PlatformInfo:
+    # Returns the canonical name of the host platform.
+    # Matches the directory name under library/platform/.
+    static fun name() -> str:
+        return "windows"

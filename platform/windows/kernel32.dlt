@@ -37,3 +37,5 @@ extern lib "kernel32":
     fun CreatePipe(hReadPipe: i64, hWritePipe: i64, lpPipeAttributes: i64, nSize: i32) -> i32
     fun SetHandleInformation(hObject: i64, dwMask: i32, dwFlags: i32) -> i32
     fun DeleteFileA(lpFileName: str) -> i32
+    fun GetFileAttributesA(lpFileName: str) -> i32
+    fun PeekNamedPipe(hNamedPipe: i64, lpBuffer: i64, nBufferSize: i32, lpBytesRead: i64, lpTotalBytesAvail: i64, lpBytesLeftThisMessage: i64) -> i32

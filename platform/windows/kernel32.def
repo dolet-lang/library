@@ -50,3 +50,4 @@ EXPORTS
     GetExitCodeProcess
     CreatePipe
     SetHandleInformation
+    PeekNamedPipe

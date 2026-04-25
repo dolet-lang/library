@@ -1,0 +1,58 @@
+# system.dlt
+# Python-os-like system facade for Dolet.
+#
+# All operations are static. The 3-level form `System.Sub.method()`
+# is namespace-qualified — the compiler resolves it to plain
+# `Sub.method()`, so `System.Command.run("git")` and
+# `Command.run("git")` emit the exact same code.
+#
+# Usage:
+#   import std
+#   cwd:  str = System.cwd()
+#   ok:   i32 = System.exists("file.txt")
+#   code: i32 = System.Command.run("git status")
+#   out:  str = System.Command.capture("git rev-parse HEAD")
+#   raw:  str = System.Argv.raw()
+#   plat: str = System.platform()
+
+# Sub-namespace: process / shell commands.
+struct Command:
+    static fun run(cmd: str) -> i32:
+        return Process.run(cmd)
+
+    static fun capture(cmd: str) -> str:
+        raw: str = Process.run_capture(cmd)
+        return Str.trim(raw)
+
+    static fun exit(code: i32):
+        Process.exit(code)
+
+    # Run a command and capture exit code, stdout, and stderr
+    # separately. Returns Output(code, stdout, stderr) where the
+    # two strings are trimmed.
+    static fun output(cmd: str) -> Output:
+        return Process.run_output(cmd)
+
+# Sub-namespace: command-line arguments.
+struct Argv:
+    static fun raw() -> str:
+        return Args.get_raw()
+
+    static fun count() -> i32:
+        return Args.count()
+
+    static fun get(index: i32) -> str:
+        return Args.get(index)
+
+# Top-level facade. Static-only. No instances are ever created.
+struct System:
+    # filesystem
+    static fun cwd() -> str:
+        return PathOps.get_cwd()
+
+    static fun exists(path: str) -> i32:
+        return PathOps.exists(path)
+
+    # platform identification
+    static fun platform() -> str:
+        return PlatformInfo.name()

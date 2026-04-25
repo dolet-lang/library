@@ -8,6 +8,7 @@ load platform/windows/file
 load platform/windows/path
 load platform/windows/args
 load platform/windows/process
+load platform/windows/info
 
 # Selective import mappings for this platform
 expose platform/windows/str as string

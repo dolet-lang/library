@@ -2,6 +2,7 @@ module std
 load std/io
 load core/types/collections
 load std/fileIO
+load std/system
 
 # Selective import mapping — platform-neutral
 expose std/io as io
@@ -16,6 +17,11 @@ export FileOps
 export PathOps
 export Args
 export Process
+export Output
+export PlatformInfo
+export Command
+export Argv
+export System
 export List
 export Array
 export Map
