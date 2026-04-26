@@ -62,3 +62,11 @@ extend str:
     fun concat(self, other: str) -> str:
         return self + other
 
+    # NOTE: `equals` deliberately omitted from this `extend str` block.
+    # `Str.equals(a, b)` (the static form on the Str struct) works
+    # correctly. A chained `a.equals(b)` form would hit a known
+    # codegen bug — calls into bool-returning extend-str methods are
+    # lowered as `-> ()` (void) and downstream code breaks.
+    # See ROADMAP.md → BUGS → "chained extend-str return type loss".
+    # When that compiler bug is fixed, add the wrapper back here.
+

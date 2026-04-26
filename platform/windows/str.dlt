@@ -53,6 +53,24 @@ struct Str:
             i = i + 1
         return result as str
 
+    # Compare two strings for byte-exact equality. Returns true iff
+    # both have the same length and the same bytes. Both arguments
+    # may be the empty string (returns true). Constant-time-equivalent
+    # complexity is NOT guaranteed — do not use for secrets.
+    static fun equals(a: str, b: str) -> bool:
+        a_len: i64 = Memory.strlen(a)
+        b_len: i64 = Memory.strlen(b)
+        if a_len != b_len:
+            return false
+        i: i64 = 0
+        while i < a_len:
+            ac: i32 = Memory.read_i8((a as i64) + i) as i32
+            bc: i32 = Memory.read_i8((b as i64) + i) as i32
+            if ac != bc:
+                return false
+            i = i + 1
+        return true
+
     static fun contains(s: str, substr: str) -> bool:
         s_len: i64 = Memory.strlen(s)
         sub_len: i64 = Memory.strlen(substr)
