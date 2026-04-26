@@ -3,6 +3,7 @@ load std/io
 load core/types/collections
 load std/fileIO
 load std/system
+load std/panic
 
 # Selective import mapping — platform-neutral
 expose std/io as io
@@ -22,6 +23,7 @@ export PlatformInfo
 export Command
 export Argv
 export System
+export dolet_panic
 export List
 export Array
 export Map
