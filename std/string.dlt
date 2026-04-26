@@ -62,11 +62,10 @@ extend str:
     fun concat(self, other: str) -> str:
         return self + other
 
-    # NOTE: `equals` deliberately omitted from this `extend str` block.
-    # `Str.equals(a, b)` (the static form on the Str struct) works
-    # correctly. A chained `a.equals(b)` form would hit a known
-    # codegen bug — calls into bool-returning extend-str methods are
-    # lowered as `-> ()` (void) and downstream code breaks.
-    # See ROADMAP.md → BUGS → "chained extend-str return type loss".
-    # When that compiler bug is fixed, add the wrapper back here.
+    """Compare two strings for byte-exact equality. Returns true iff
+    same length and same bytes. Empty == empty is true. This is the
+    public string-equality API — `str_eq` exists in the compiler
+    internals but is NOT exposed to user code; use this instead."""
+    fun equals(self, other: str) -> bool:
+        return Str.equals(self, other)
 

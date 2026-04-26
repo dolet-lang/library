@@ -1,6 +1,7 @@
 module std
 load std/io
 load core/types/collections
+load std/string
 load std/fileIO
 load std/system
 load std/panic
