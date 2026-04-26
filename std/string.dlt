@@ -83,15 +83,68 @@ extend str:
     fun repeat(self, n: i64) -> str:
         return Str.repeat(self, n)
 
-    # NOTE: split/lines deliberately omitted from this block.
-    # They need `list<str>` and `result.append(str_value)`. Calling
-    # the str overload of list.append currently hits compiler bug
-    # B-02 (find_impl_method returns the FIRST list.append variant
-    # — i8 — instead of the str overload, so the call site emits
-    # `(!llvm.ptr, i8)` for an `(!llvm.ptr, !llvm.ptr)` callee
-    # and MLIR translation fails). When B-02 is fixed, re-add
-    # `split(self, delim) -> list<str>` and `lines(self) -> list<str>`.
-    # See ROADMAP.md → BUGS → B-02.
+    """Split self by `delim` into a list of segments. Empty `delim`
+    returns a single-element list containing self. Adjacent delims
+    produce empty-string segments. The result list and every
+    segment string are heap-allocated."""
+    fun split(self, delim: str) -> list<str>:
+        result: list<str> = []
+        s_len: i64 = Memory.strlen(self)
+        delim_len: i64 = Memory.strlen(delim)
+        if delim_len == 0:
+            result.append(self)
+            return result
+        start: i64 = 0
+        pos: i64 = 0
+        while pos <= s_len - delim_len:
+            matched: bool = true
+            j: i64 = 0
+            while j < delim_len:
+                ac: i32 = Memory.read_i8((self as i64) + pos + j) as i32
+                bc: i32 = Memory.read_i8((delim as i64) + j) as i32
+                if ac != bc:
+                    matched = false
+                    j = delim_len
+                else:
+                    j = j + 1
+            if matched:
+                seg_len: i64 = pos - start
+                seg: i64 = Memory.malloc(seg_len + 1)
+                Memory.copy(seg, (self as i64) + start, seg_len)
+                Memory.write_i8(seg + seg_len, 0 as i8)
+                result.append(seg as str)
+                start = pos + delim_len
+                pos = start
+            else:
+                pos = pos + 1
+        final_len: i64 = s_len - start
+        seg2: i64 = Memory.malloc(final_len + 1)
+        Memory.copy(seg2, (self as i64) + start, final_len)
+        Memory.write_i8(seg2 + final_len, 0 as i8)
+        result.append(seg2 as str)
+        return result
+
+    """Split self by newlines (\n). Trailing \r on each line (CRLF
+    line endings on Windows) is stripped. An empty string returns a
+    single empty-string element."""
+    fun lines(self) -> list<str>:
+        raw: list<str> = self.split("\n")
+        out: list<str> = []
+        n: i64 = raw.size()
+        i: i64 = 0
+        while i < n:
+            ln: str = raw.get_str(i)
+            ln_len: i64 = Memory.strlen(ln)
+            if ln_len > 0:
+                last: i32 = Memory.read_i8((ln as i64) + ln_len - 1) as i32
+                if last == 13:
+                    out.append(Str.substring(ln, 0 as i64, ln_len - 1))
+                else:
+                    out.append(ln)
+            else:
+                out.append(ln)
+            i = i + 1
+        return out
 
     """Parse self as a decimal i64. Returns 0 on parse error.
     Wraps Str.parse_i64."""
