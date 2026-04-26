@@ -270,6 +270,69 @@ struct Str:
         Memory.write_i8(out + out_len, 0 as i8)
         return out as str
 
+    # Parse `s` as a decimal i64. Leading whitespace and an optional
+    # leading '-' or '+' sign are accepted. Returns 0 on parse error
+    # — use `is_int(s)` to verify first if you need to distinguish
+    # '0' from 'invalid'. Future: returns Result<i64, str> when the
+    # generic Result type lands.
+    static fun parse_i64(s: str) -> i64:
+        s_len: i64 = Memory.strlen(s)
+        i: i64 = 0
+        scanning: bool = true
+        while scanning:
+            if i >= s_len:
+                scanning = false
+            else:
+                c: i32 = Memory.read_i8((s as i64) + i) as i32
+                if c == 32 or c == 9:
+                    i = i + 1
+                else:
+                    scanning = false
+        sign: i64 = 1
+        if i < s_len:
+            ch: i32 = Memory.read_i8((s as i64) + i) as i32
+            if ch == 45:
+                sign = 0 - 1
+                i = i + 1
+            elif ch == 43:
+                i = i + 1
+        result: i64 = 0
+        any_digit: bool = false
+        digit_loop: bool = true
+        while digit_loop:
+            if i >= s_len:
+                digit_loop = false
+            else:
+                d: i32 = Memory.read_i8((s as i64) + i) as i32
+                if d >= 48 and d <= 57:
+                    result = result * (10 as i64) + ((d - 48) as i64)
+                    any_digit = true
+                    i = i + 1
+                else:
+                    digit_loop = false
+        if any_digit == false:
+            return 0
+        return result * sign
+
+    # Returns true iff `s` is a valid decimal integer (optionally
+    # signed, no leading whitespace).
+    static fun is_int(s: str) -> bool:
+        s_len: i64 = Memory.strlen(s)
+        if s_len == 0:
+            return false
+        i: i64 = 0
+        first: i32 = Memory.read_i8((s as i64)) as i32
+        if first == 45 or first == 43:
+            i = 1
+            if s_len == 1:
+                return false
+        while i < s_len:
+            c: i32 = Memory.read_i8((s as i64) + i) as i32
+            if c < 48 or c > 57:
+                return false
+            i = i + 1
+        return true
+
     # Repeat `s` exactly `n` times. n=0 returns empty string. n<0
     # is treated as 0. Result is heap-allocated.
     static fun repeat(s: str, n: i64) -> str:

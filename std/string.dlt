@@ -83,3 +83,59 @@ extend str:
     fun repeat(self, n: i64) -> str:
         return Str.repeat(self, n)
 
+    # NOTE: split/lines deliberately omitted from this block.
+    # They need `list<str>` and `result.append(str_value)`. Calling
+    # the str overload of list.append currently hits compiler bug
+    # B-02 (find_impl_method returns the FIRST list.append variant
+    # — i8 — instead of the str overload, so the call site emits
+    # `(!llvm.ptr, i8)` for an `(!llvm.ptr, !llvm.ptr)` callee
+    # and MLIR translation fails). When B-02 is fixed, re-add
+    # `split(self, delim) -> list<str>` and `lines(self) -> list<str>`.
+    # See ROADMAP.md → BUGS → B-02.
+
+    """Parse self as a decimal i64. Returns 0 on parse error.
+    Wraps Str.parse_i64."""
+    fun parse_i64(self) -> i64:
+        return Str.parse_i64(self)
+
+    """Returns true iff self is a valid decimal integer (optionally
+    signed, no leading whitespace). Wraps Str.is_int."""
+    fun is_int(self) -> bool:
+        return Str.is_int(self)
+
+
+# ============================================================
+# Top-level utilities (not on extend str — operate on lists)
+# ============================================================
+
+# Concatenate a list of strings with `sep` between each element.
+# Returns a heap-allocated new string. Empty list returns "".
+fun str_join(parts: list<str>, sep: str) -> str:
+    n: i64 = parts.size()
+    if n == 0:
+        empty_buf: i64 = Memory.malloc(1)
+        Memory.write_i8(empty_buf, 0 as i8)
+        return empty_buf as str
+    sep_len: i64 = Memory.strlen(sep)
+    total: i64 = 0
+    i: i64 = 0
+    while i < n:
+        p: str = parts.get_str(i)
+        total = total + Memory.strlen(p)
+        i = i + 1
+    total = total + sep_len * (n - 1)
+    out: i64 = Memory.malloc(total + 1)
+    dst: i64 = 0
+    i = 0
+    while i < n:
+        p2: str = parts.get_str(i)
+        plen: i64 = Memory.strlen(p2)
+        Memory.copy(out + dst, p2 as i64, plen)
+        dst = dst + plen
+        if i < n - 1:
+            Memory.copy(out + dst, sep as i64, sep_len)
+            dst = dst + sep_len
+        i = i + 1
+    Memory.write_i8(out + total, 0 as i8)
+    return out as str
+
