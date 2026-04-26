@@ -172,9 +172,124 @@ struct Str:
         
         # Null terminate
         Memory.write_i8(result + result_len, 0 as i8)
-        
+
         return result as str
-    
+
+    # Find the first occurrence of `substr` inside `s`. Returns the
+    # byte offset of the match, or -1 if not found. Empty `substr`
+    # matches at offset 0.
+    static fun index_of(s: str, substr: str) -> i64:
+        s_len: i64 = Memory.strlen(s)
+        sub_len: i64 = Memory.strlen(substr)
+        if sub_len == 0:
+            return 0
+        if sub_len > s_len:
+            return 0 - 1
+        i: i64 = 0
+        while i <= s_len - sub_len:
+            j: i64 = 0
+            ok: bool = true
+            while j < sub_len:
+                ac: i32 = Memory.read_i8((s as i64) + i + j) as i32
+                bc: i32 = Memory.read_i8((substr as i64) + j) as i32
+                if ac != bc:
+                    ok = false
+                    j = sub_len
+                else:
+                    j = j + 1
+            if ok:
+                return i
+            i = i + 1
+        return 0 - 1
+
+    # Replace EVERY occurrence of `old` in `s` with `new`. Returns a
+    # heap-allocated new string. Empty `old` returns `s` unchanged
+    # (avoids infinite loop on empty needle).
+    static fun replace(s: str, old: str, new: str) -> str:
+        s_len: i64 = Memory.strlen(s)
+        old_len: i64 = Memory.strlen(old)
+        new_len: i64 = Memory.strlen(new)
+        if old_len == 0:
+            # Allocate copy to honor "returns new heap allocation"
+            buf0: i64 = Memory.malloc(s_len + 1)
+            Memory.copy(buf0, s as i64, s_len + 1)
+            return buf0 as str
+        # First pass: count occurrences to size the result buffer
+        count: i64 = 0
+        scan: i64 = 0
+        while scan <= s_len - old_len:
+            jm: i64 = 0
+            mm: bool = true
+            while jm < old_len:
+                ac1: i32 = Memory.read_i8((s as i64) + scan + jm) as i32
+                bc1: i32 = Memory.read_i8((old as i64) + jm) as i32
+                if ac1 != bc1:
+                    mm = false
+                    jm = old_len
+                else:
+                    jm = jm + 1
+            if mm:
+                count = count + 1
+                scan = scan + old_len
+            else:
+                scan = scan + 1
+        # Allocate result: s_len + count*(new_len-old_len) + 1
+        delta: i64 = new_len - old_len
+        out_len: i64 = s_len + count * delta
+        out: i64 = Memory.malloc(out_len + 1)
+        # Second pass: copy with substitution
+        src: i64 = 0
+        dst: i64 = 0
+        while src < s_len:
+            # Try matching `old` at src
+            match_here: bool = false
+            if src <= s_len - old_len:
+                jm2: i64 = 0
+                mm2: bool = true
+                while jm2 < old_len:
+                    ac2: i32 = Memory.read_i8((s as i64) + src + jm2) as i32
+                    bc2: i32 = Memory.read_i8((old as i64) + jm2) as i32
+                    if ac2 != bc2:
+                        mm2 = false
+                        jm2 = old_len
+                    else:
+                        jm2 = jm2 + 1
+                if mm2:
+                    match_here = true
+            if match_here:
+                k: i64 = 0
+                while k < new_len:
+                    Memory.write_i8(out + dst + k, Memory.read_i8((new as i64) + k))
+                    k = k + 1
+                dst = dst + new_len
+                src = src + old_len
+            else:
+                Memory.write_i8(out + dst, Memory.read_i8((s as i64) + src))
+                dst = dst + 1
+                src = src + 1
+        Memory.write_i8(out + out_len, 0 as i8)
+        return out as str
+
+    # Repeat `s` exactly `n` times. n=0 returns empty string. n<0
+    # is treated as 0. Result is heap-allocated.
+    static fun repeat(s: str, n: i64) -> str:
+        if n <= 0:
+            empty: i64 = Memory.malloc(1)
+            Memory.write_i8(empty, 0 as i8)
+            return empty as str
+        s_len: i64 = Memory.strlen(s)
+        out_len: i64 = s_len * n
+        out: i64 = Memory.malloc(out_len + 1)
+        i: i64 = 0
+        while i < n:
+            k: i64 = 0
+            while k < s_len:
+                Memory.write_i8(out + i * s_len + k, Memory.read_i8((s as i64) + k))
+                k = k + 1
+            i = i + 1
+        Memory.write_i8(out + out_len, 0 as i8)
+        return out as str
+
     # Helper to check if a character is whitespace
     static fun is_whitespace(c: i32) -> bool:
         # space (32), tab (9), newline (10), carriage return (13)

@@ -69,3 +69,17 @@ extend str:
     fun equals(self, other: str) -> bool:
         return Str.equals(self, other)
 
+    """Find the first occurrence of `substr` and return its byte
+    offset, or -1 if not found. Empty substr returns 0."""
+    fun index_of(self, substr: str) -> i64:
+        return Str.index_of(self, substr)
+
+    """Replace every occurrence of `old` with `new`. Returns a new
+    heap-allocated string. Empty `old` returns a copy of self."""
+    fun replace(self, old: str, new: str) -> str:
+        return Str.replace(self, old, new)
+
+    """Repeat self exactly `n` times. n<=0 returns empty string."""
+    fun repeat(self, n: i64) -> str:
+        return Str.repeat(self, n)
+
