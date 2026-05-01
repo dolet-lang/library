@@ -156,3 +156,53 @@ struct Convert:
             Memory.write_i8(res_false + 4, 101 as i8)
             Memory.write_i8(res_false + 5, 0 as i8)
             return res_false as str
+
+    # Format an i64 as a lowercase hex string with `0x` prefix.
+    # Negative values are bit-reinterpreted to 64 bits unsigned, so
+    # -1 formats as "0xffffffffffffffff". Zero formats as "0x0".
+    static fun i64_to_hex(value: i64) -> str:
+        if value == 0 as i64:
+            buf0: i64 = Memory.malloc(4)
+            Memory.write_i8(buf0,     48 as i8)   # '0'
+            Memory.write_i8(buf0 + 1, 120 as i8)  # 'x'
+            Memory.write_i8(buf0 + 2, 48 as i8)   # '0'
+            Memory.write_i8(buf0 + 3, 0 as i8)
+            return buf0 as str
+        # Find highest non-zero nibble (top): scan from MSB.
+        top: i32 = 15
+        scanning: bool = true
+        while scanning:
+            shift: i64 = (top as i64) * (4 as i64)
+            nib_h: i64 = (value >> shift) & (15 as i64)
+            if nib_h == 0 as i64 and top > 0:
+                top = top - 1
+            else:
+                scanning = false
+        # Emit "0x" + (top+1) hex chars, MSB first.
+        out_len: i32 = 2 + top + 1
+        out: i64 = Memory.malloc((out_len as i64) + 1)
+        Memory.write_i8(out,     48 as i8)
+        Memory.write_i8(out + 1, 120 as i8)
+        wp: i32 = 2
+        ni: i32 = top
+        while ni >= 0:
+            sh: i64 = (ni as i64) * (4 as i64)
+            nib: i64 = (value >> sh) & (15 as i64)
+            d_char: i32 = 0
+            if nib < 10 as i64:
+                d_char = (nib as i32) + 48
+            else:
+                d_char = (nib as i32) - 10 + 97
+            Memory.write_i8(out + (wp as i64), d_char as i8)
+            wp = wp + 1
+            ni = ni - 1
+        Memory.write_i8(out + (out_len as i64), 0 as i8)
+        return out as str
+
+    # Format an i32 as lowercase hex with `0x` prefix.
+    static fun i32_to_hex(value: i32) -> str:
+        # Zero-extend to i64 — keeps positive values positive, but
+        # negative i32 sign-extends to i64. The hex output therefore
+        # shows 16 nibbles for negative i32. If you want exactly 8
+        # nibbles, mask with 0xFFFFFFFF first via i64_to_hex.
+        return Convert.i64_to_hex(value as i64)
