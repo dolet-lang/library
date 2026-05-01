@@ -328,6 +328,102 @@ struct Str:
             i = i + 1
         return true
 
+    static fun parse_i32(s: str) -> i32:
+        return Str.parse_i64(s) as i32
+
+    static fun parse_f64(s: str) -> f64:
+        s_len: i64 = Memory.strlen(s)
+        i: i64 = 0
+        wsp: bool = true
+        while wsp:
+            if i >= s_len:
+                wsp = false
+            else:
+                c0: i32 = Memory.read_i8((s as i64) + i) as i32
+                if c0 == 32 or c0 == 9:
+                    i = i + 1
+                else:
+                    wsp = false
+        sign: f64 = 1.0
+        if i < s_len:
+            ch0: i32 = Memory.read_i8((s as i64) + i) as i32
+            if ch0 == 45:
+                sign = 0.0 - 1.0
+                i = i + 1
+            elif ch0 == 43:
+                i = i + 1
+        int_part: f64 = 0.0
+        any_digit: bool = false
+        ip_loop: bool = true
+        while ip_loop:
+            if i >= s_len:
+                ip_loop = false
+            else:
+                d: i32 = Memory.read_i8((s as i64) + i) as i32
+                if d >= 48 and d <= 57:
+                    int_part = int_part * 10.0 + ((d - 48) as f64)
+                    any_digit = true
+                    i = i + 1
+                else:
+                    ip_loop = false
+        frac_part: f64 = 0.0
+        frac_div: f64 = 1.0
+        if i < s_len:
+            dot: i32 = Memory.read_i8((s as i64) + i) as i32
+            if dot == 46:
+                i = i + 1
+                fp_loop: bool = true
+                while fp_loop:
+                    if i >= s_len:
+                        fp_loop = false
+                    else:
+                        d2: i32 = Memory.read_i8((s as i64) + i) as i32
+                        if d2 >= 48 and d2 <= 57:
+                            frac_part = frac_part * 10.0 + ((d2 - 48) as f64)
+                            frac_div = frac_div * 10.0
+                            any_digit = true
+                            i = i + 1
+                        else:
+                            fp_loop = false
+        exp_val: i32 = 0
+        exp_sign: i32 = 1
+        if i < s_len:
+            ec: i32 = Memory.read_i8((s as i64) + i) as i32
+            if ec == 101 or ec == 69:
+                i = i + 1
+                if i < s_len:
+                    es: i32 = Memory.read_i8((s as i64) + i) as i32
+                    if es == 45:
+                        exp_sign = 0 - 1
+                        i = i + 1
+                    elif es == 43:
+                        i = i + 1
+                ep_loop: bool = true
+                while ep_loop:
+                    if i >= s_len:
+                        ep_loop = false
+                    else:
+                        d3: i32 = Memory.read_i8((s as i64) + i) as i32
+                        if d3 >= 48 and d3 <= 57:
+                            exp_val = exp_val * 10 + (d3 - 48)
+                            i = i + 1
+                        else:
+                            ep_loop = false
+        if any_digit == false:
+            return 0.0
+        result: f64 = int_part + frac_part / frac_div
+        if exp_val > 0:
+            mult: f64 = 1.0
+            ek: i32 = 0
+            while ek < exp_val:
+                mult = mult * 10.0
+                ek = ek + 1
+            if exp_sign > 0:
+                result = result * mult
+            else:
+                result = result / mult
+        return result * sign
+
     # Repeat `s` exactly `n` times. n=0 returns empty string. n<0
     # is treated as 0. Result is heap-allocated.
     static fun repeat(s: str, n: i64) -> str:

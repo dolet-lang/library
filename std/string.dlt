@@ -156,6 +156,19 @@ extend str:
     fun is_int(self) -> bool:
         return Str.is_int(self)
 
+    """Parse self as i32 (truncates if out of range). Wraps Str.parse_i32."""
+    fun parse_i32(self) -> i32:
+        return Str.parse_i32(self)
+
+    """Parse self as f64 with optional sign / fraction / exponent.
+    Returns 0.0 on parse error. Wraps Str.parse_f64."""
+    fun parse_f64(self) -> f64:
+        return Str.parse_f64(self)
+
+    """True iff self is the empty string."""
+    fun is_empty(self) -> bool:
+        return Memory.strlen(self) == 0 as i64
+
 
 # ============================================================
 # Top-level utilities (not on extend str — operate on lists)
