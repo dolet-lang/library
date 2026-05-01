@@ -1,0 +1,75 @@
+# dir.dlt - Directory enumeration (Windows)
+#
+# Wraps FindFirstFileA / FindNextFileA / FindClose. The Win32
+# WIN32_FIND_DATA_A struct is 320 bytes; we only need cFileName at
+# offset 44 (MAX_PATH = 260 bytes, null-terminated). The rest of
+# the struct is dwFileAttributes (4), three FILETIMEs (24),
+# nFileSize* (8), reserved (8), then cFileName, cAlternateFileName.
+#
+# Returns just file/folder names (no leading path), with the "."
+# and ".." entries filtered out.
+
+# Useful constants:
+#   INVALID_HANDLE_VALUE = -1 (returned by FindFirstFileA on failure)
+#   FILE_ATTRIBUTE_DIRECTORY = 16 (0x10) — bit in dwFileAttributes
+#   MAX_PATH = 260
+
+struct Dir:
+    # List names in `path`. Returns an empty list if the directory
+    # doesn't exist or is empty (after filtering . and ..). Names
+    # are heap-allocated copies; the result list owns them.
+    static fun list(path: str) -> list<str>:
+        result: list<str> = []
+        # Build search pattern: path + "\*"
+        path_len: i64 = Memory.strlen(path)
+        pattern: i64 = Memory.malloc(path_len + 4)
+        Memory.copy(pattern, path as i64, path_len)
+        # Append "\*" if path doesn't already end in a separator,
+        # else just "*". Check trailing char.
+        wp: i64 = path_len
+        if path_len > 0:
+            last: i32 = Memory.read_i8((path as i64) + path_len - 1) as i32
+            if last != 92 and last != 47:
+                Memory.write_i8(pattern + wp, 92 as i8)   # '\\'
+                wp = wp + 1
+        Memory.write_i8(pattern + wp, 42 as i8)            # '*'
+        wp = wp + 1
+        Memory.write_i8(pattern + wp, 0 as i8)
+        # Allocate WIN32_FIND_DATA_A (320 bytes — generous)
+        find_data: i64 = Memory.malloc_zeroed(320 as i64)
+        h: i64 = FindFirstFileA(pattern as str, find_data)
+        if h == 0 - 1:
+            # INVALID_HANDLE_VALUE — directory doesn't exist or empty
+            Memory.free(pattern)
+            Memory.free(find_data)
+            return result
+        # Iterate
+        scanning: bool = true
+        while scanning:
+            # cFileName at offset +44 (MAX_PATH = 260 bytes, null-terminated)
+            name_ptr: i64 = find_data + (44 as i64)
+            # Skip "." and ".." entries
+            c0: i32 = Memory.read_i8(name_ptr) as i32
+            skip: bool = false
+            if c0 == 46:
+                c1: i32 = Memory.read_i8(name_ptr + 1) as i32
+                if c1 == 0:
+                    skip = true
+                elif c1 == 46:
+                    c2: i32 = Memory.read_i8(name_ptr + 2) as i32
+                    if c2 == 0:
+                        skip = true
+            if skip == false:
+                # Copy the name (null-terminated string starting at name_ptr)
+                name_len: i64 = Memory.strlen(name_ptr as str)
+                name_copy: i64 = Memory.malloc(name_len + 1)
+                Memory.copy(name_copy, name_ptr, name_len + 1)
+                result.append(name_copy as str)
+            # Next entry
+            ok: i32 = FindNextFileA(h, find_data)
+            if ok == 0:
+                scanning = false
+        FindClose(h)
+        Memory.free(pattern)
+        Memory.free(find_data)
+        return result

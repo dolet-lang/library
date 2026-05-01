@@ -39,3 +39,7 @@ extern lib "kernel32":
     fun DeleteFileA(lpFileName: str) -> i32
     fun GetFileAttributesA(lpFileName: str) -> i32
     fun PeekNamedPipe(hNamedPipe: i64, lpBuffer: i64, nBufferSize: i32, lpBytesRead: i64, lpTotalBytesAvail: i64, lpBytesLeftThisMessage: i64) -> i32
+    # Directory enumeration
+    fun FindFirstFileA(lpFileName: str, lpFindFileData: i64) -> i64
+    fun FindNextFileA(hFindFile: i64, lpFindFileData: i64) -> i32
+    fun FindClose(hFindFile: i64) -> i32

@@ -24,6 +24,7 @@ export PlatformInfo
 export Command
 export Argv
 export System
+export Dir
 export dolet_panic
 export List
 export Array
