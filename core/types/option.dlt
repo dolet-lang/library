@@ -1,0 +1,130 @@
+# option.dlt — Option<T> sum type (Some(value) | None).
+#
+# Layout: 16-byte heap struct, accessed via @transparent __ptr:
+#   offset 0:  tag (i32)   — 0 = Some, 1 = None
+#   offset 4:  pad (4 bytes for 8-byte alignment)
+#   offset 8:  value (i64-sized slot)
+#
+# Like list<T>, Option<T> is type-parameterised at the surface but
+# erased to !llvm.ptr at MLIR level. Per-type constructors and
+# accessors live below — overload resolution picks the right one.
+#
+# Once user-defined generics + monomorphization land (B3), the
+# per-type wrappers can be replaced with a single generic body.
+
+@transparent
+struct Option<T>:
+    _raw: __ptr
+
+type option = Option
+
+# ============================================================
+# Constructors — overloaded `Some` per supported value type
+# ============================================================
+
+fun Some(v: i32) -> option<i32>:
+    a: i64 = Memory.malloc(16 as i64)
+    Memory.write_i32(a, 0)
+    Memory.write_i32(a + 8, v)
+    return a as Option<i32>
+
+fun Some(v: i64) -> option<i64>:
+    a: i64 = Memory.malloc(16 as i64)
+    Memory.write_i32(a, 0)
+    Memory.write_i64(a + 8, v)
+    return a as Option<i64>
+
+fun Some(v: str) -> option<str>:
+    a: i64 = Memory.malloc(16 as i64)
+    Memory.write_i32(a, 0)
+    Memory.write_i64(a + 8, v as i64)
+    return a as Option<str>
+
+fun Some(v: bool) -> option<bool>:
+    a: i64 = Memory.malloc(16 as i64)
+    Memory.write_i32(a, 0)
+    bv: i32 = 0
+    if v:
+        bv = 1
+    Memory.write_i32(a + 8, bv)
+    return a as Option<bool>
+
+fun Some(v: f64) -> option<f64>:
+    a: i64 = Memory.malloc(16 as i64)
+    Memory.write_i32(a, 0)
+    Memory.write_f64(a + 8, v)
+    return a as Option<f64>
+
+# Single None constructor — type-erased, assignable to any Option<T>
+# because Option<T> is @transparent over __ptr.
+fun None() -> option<i64>:
+    a: i64 = Memory.malloc(16 as i64)
+    Memory.write_i32(a, 1)
+    Memory.write_i64(a + 8, 0 as i64)
+    return a as Option<i64>
+
+# ============================================================
+# Methods — common to all Option<T> instantiations
+# ============================================================
+
+extend option:
+    fun is_some(self) -> bool:
+        addr: i64 = self as i64
+        return Memory.read_i32(addr) == 0
+
+    fun is_none(self) -> bool:
+        addr: i64 = self as i64
+        return Memory.read_i32(addr) == 1
+
+    # Per-type unwrap variants. Calling the wrong unwrap_X for the
+    # actual T silently reads bytes — match the type at the call
+    # site. (When monomorphization lands, a single `unwrap` will
+    # dispatch correctly per Option<T> instantiation.)
+    fun unwrap_i32(self) -> i32:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Option.unwrap_i32 called on None"
+        return Memory.read_i32(addr + 8)
+
+    fun unwrap_i64(self) -> i64:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Option.unwrap_i64 called on None"
+        return Memory.read_i64(addr + 8)
+
+    fun unwrap_str(self) -> str:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Option.unwrap_str called on None"
+        return Memory.read_i64(addr + 8) as str
+
+    fun unwrap_bool(self) -> bool:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Option.unwrap_bool called on None"
+        return Memory.read_i32(addr + 8) == 1
+
+    fun unwrap_f64(self) -> f64:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Option.unwrap_f64 called on None"
+        return Memory.read_f64(addr + 8)
+
+    # unwrap_or_X — return default if None
+    fun unwrap_or_i32(self, default: i32) -> i32:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            return default
+        return Memory.read_i32(addr + 8)
+
+    fun unwrap_or_i64(self, default: i64) -> i64:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            return default
+        return Memory.read_i64(addr + 8)
+
+    fun unwrap_or_str(self, default: str) -> str:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            return default
+        return Memory.read_i64(addr + 8) as str

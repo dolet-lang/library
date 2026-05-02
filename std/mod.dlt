@@ -1,6 +1,7 @@
 module std
 load std/io
 load core/types/collections
+load core/types/option
 load std/string
 load std/fileIO
 load std/system
@@ -29,6 +30,9 @@ export dolet_panic
 export List
 export Array
 export Map
+export Option
+export Some
+export None
 export print
 export println
 export print_no_newline
