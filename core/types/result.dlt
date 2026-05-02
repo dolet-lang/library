@@ -1,0 +1,168 @@
+# result.dlt — Result<T, E> sum type (Ok(value) | Err(error)).
+#
+# Layout: 24-byte heap struct, accessed via @transparent __ptr:
+#   offset 0:  tag (i32)   — 0 = Ok, 1 = Err
+#   offset 4:  pad (4 bytes for 8-byte alignment)
+#   offset 8:  value (i64-sized slot, valid iff tag == 0)
+#   offset 16: error (i64-sized slot, valid iff tag == 1)
+#
+# Same @transparent + per-type-overload pattern as Option<T>.
+# When user-defined generics + monomorphization land (B3), the
+# per-type wrappers can be replaced with a single generic body.
+
+@transparent
+struct Result<T, E>:
+    _raw: __ptr
+
+type result = Result
+
+# ============================================================
+# Constructors — overloaded `Ok` and `Err` per supported type
+# ============================================================
+
+fun Ok(v: i32) -> result<i32, str>:
+    a: i64 = Memory.malloc(24 as i64)
+    Memory.write_i32(a, 0)
+    Memory.write_i32(a + 8, v)
+    Memory.write_i64(a + 16, 0 as i64)
+    return a as result<i32, str>
+
+fun Ok(v: i64) -> result<i64, str>:
+    a: i64 = Memory.malloc(24 as i64)
+    Memory.write_i32(a, 0)
+    Memory.write_i64(a + 8, v)
+    Memory.write_i64(a + 16, 0 as i64)
+    return a as result<i64, str>
+
+fun Ok(v: str) -> result<str, str>:
+    a: i64 = Memory.malloc(24 as i64)
+    Memory.write_i32(a, 0)
+    Memory.write_i64(a + 8, v as i64)
+    Memory.write_i64(a + 16, 0 as i64)
+    return a as result<str, str>
+
+fun Ok(v: bool) -> result<bool, str>:
+    a: i64 = Memory.malloc(24 as i64)
+    Memory.write_i32(a, 0)
+    bv: i32 = 0
+    if v:
+        bv = 1
+    Memory.write_i32(a + 8, bv)
+    Memory.write_i64(a + 16, 0 as i64)
+    return a as result<bool, str>
+
+fun Ok(v: f64) -> result<f64, str>:
+    a: i64 = Memory.malloc(24 as i64)
+    Memory.write_i32(a, 0)
+    Memory.write_f64(a + 8, v)
+    Memory.write_i64(a + 16, 0 as i64)
+    return a as result<f64, str>
+
+# Err — type-erased error payload. Error type is conventionally
+# str (descriptive message). For other error types, cast on the
+# unwrap_err side.
+fun Err(e: str) -> result<i64, str>:
+    a: i64 = Memory.malloc(24 as i64)
+    Memory.write_i32(a, 1)
+    Memory.write_i64(a + 8, 0 as i64)
+    Memory.write_i64(a + 16, e as i64)
+    return a as result<i64, str>
+
+fun Err_i32(e: i32) -> result<i64, i32>:
+    a: i64 = Memory.malloc(24 as i64)
+    Memory.write_i32(a, 1)
+    Memory.write_i64(a + 8, 0 as i64)
+    Memory.write_i32(a + 16, e)
+    return a as result<i64, i32>
+
+fun Err_i64(e: i64) -> result<i64, i64>:
+    a: i64 = Memory.malloc(24 as i64)
+    Memory.write_i32(a, 1)
+    Memory.write_i64(a + 8, 0 as i64)
+    Memory.write_i64(a + 16, e)
+    return a as result<i64, i64>
+
+# ============================================================
+# Methods — common to all Result<T, E> instantiations
+# ============================================================
+
+extend result:
+    fun is_ok(self) -> bool:
+        addr: i64 = self as i64
+        return Memory.read_i32(addr) == 0
+
+    fun is_err(self) -> bool:
+        addr: i64 = self as i64
+        return Memory.read_i32(addr) == 1
+
+    # Per-type unwrap variants. Calling the wrong unwrap_X for
+    # the actual T silently reads bytes — match the type at the
+    # call site. (When monomorphization lands, a single `unwrap`
+    # will dispatch correctly per Result<T,E> instantiation.)
+    fun unwrap_i32(self) -> i32:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Result.unwrap_i32 called on Err"
+        return Memory.read_i32(addr + 8)
+
+    fun unwrap_i64(self) -> i64:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Result.unwrap_i64 called on Err"
+        return Memory.read_i64(addr + 8)
+
+    fun unwrap_str(self) -> str:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Result.unwrap_str called on Err"
+        return Memory.read_i64(addr + 8) as str
+
+    fun unwrap_bool(self) -> bool:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Result.unwrap_bool called on Err"
+        return Memory.read_i32(addr + 8) == 1
+
+    fun unwrap_f64(self) -> f64:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            panic "Result.unwrap_f64 called on Err"
+        return Memory.read_f64(addr + 8)
+
+    # unwrap_or_X — return default if Err
+    fun unwrap_or_i32(self, default: i32) -> i32:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            return default
+        return Memory.read_i32(addr + 8)
+
+    fun unwrap_or_i64(self, default: i64) -> i64:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            return default
+        return Memory.read_i64(addr + 8)
+
+    fun unwrap_or_str(self, default: str) -> str:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 0:
+            return default
+        return Memory.read_i64(addr + 8) as str
+
+    # Error accessors — read the error payload
+    fun unwrap_err_str(self) -> str:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 1:
+            panic "Result.unwrap_err_str called on Ok"
+        return Memory.read_i64(addr + 16) as str
+
+    fun unwrap_err_i32(self) -> i32:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 1:
+            panic "Result.unwrap_err_i32 called on Ok"
+        return Memory.read_i32(addr + 16)
+
+    fun unwrap_err_i64(self) -> i64:
+        addr: i64 = self as i64
+        if Memory.read_i32(addr) != 1:
+            panic "Result.unwrap_err_i64 called on Ok"
+        return Memory.read_i64(addr + 16)

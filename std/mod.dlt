@@ -2,6 +2,7 @@ module std
 load std/io
 load core/types/collections
 load core/types/option
+load core/types/result
 load std/string
 load std/fileIO
 load std/system
@@ -33,6 +34,9 @@ export Map
 export Option
 export Some
 export None
+export Result
+export Ok
+export Err
 export print
 export println
 export print_no_newline
