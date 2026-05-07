@@ -1,9 +1,71 @@
-# panic.dlt — Runtime helper for the `panic("msg")` keyword.
+# panic.dlt — Runtime support for `panic("msg")` and stack traces.
 #
-# The compiler lowers `panic("msg")` to a call to `dolet_panic(msg)`
-# where msg already carries the `[panic at FILE:LINE]` prefix that
-# was injected at codegen time. This helper just prints + exits 101.
+# Two things live here:
+#
+#   1. dolet_panic(msg)  — the lowering target of `panic("msg")`. The
+#      compiler injects the `[panic at FILE:LINE]` prefix into msg at
+#      codegen time, so this helper just prints + (optionally dumps the
+#      stack) + exits 101 (Rust convention).
+#
+#   2. __frame_push / __frame_pop / __print_stack_trace — manual frame
+#      tracking. When the user compiles with `--debug`, codegen wraps
+#      every non-exempt function with __frame_push at entry and
+#      __frame_pop before each return. dolet_panic then walks the array
+#      and prints the call chain. Without `--debug` no pushes happen,
+#      g_frame_count stays 0, and __print_stack_trace returns silently —
+#      so the runtime cost in release builds is zero.
+#
+# All three helpers start with `__` and so are skipped by is_frame_exempt
+# in codegen — they never instrument themselves.
 
+# ============================================================================
+# Frame stack — fixed-size, lazy-allocated.
+# ============================================================================
+# Capacity 1024 frames. Deeper recursion truncates silently rather than
+# allocating unbounded memory mid-panic.
+g_frame_names: i64 = 0
+g_frame_files: i64 = 0
+g_frame_count: i32 = 0
+g_frame_initialized: i32 = 0
+
+# Lazy init runs on the first push. We can't init at file scope because
+# Memory.malloc_zeroed isn't available until the heap is set up.
+fun __frame_init():
+    g_frame_names = Memory.malloc_zeroed(8192 as i64)   # 1024 * 8 bytes
+    g_frame_files = Memory.malloc_zeroed(8192 as i64)
+    g_frame_initialized = 1
+
+fun __frame_push(name: str, file: str):
+    if g_frame_initialized == 0:
+        __frame_init()
+    if g_frame_count >= 1024:
+        return
+    off: i64 = (g_frame_count as i64) * 8
+    Memory.write_i64(g_frame_names + off, name as i64)
+    Memory.write_i64(g_frame_files + off, file as i64)
+    g_frame_count = g_frame_count + 1
+
+fun __frame_pop():
+    if g_frame_count > 0:
+        g_frame_count = g_frame_count - 1
+
+fun __print_stack_trace():
+    if g_frame_count == 0:
+        return
+    print("")
+    print("Stack trace (most recent first):")
+    i: i32 = g_frame_count - 1
+    while i >= 0:
+        off: i64 = (i as i64) * 8
+        name: str = Memory.read_i64(g_frame_names + off) as str
+        file: str = Memory.read_i64(g_frame_files + off) as str
+        print(Str.concat(Str.concat(Str.concat("  at ", name), " ("), Str.concat(file, ")")))
+        i = i - 1
+
+# ============================================================================
+# panic("msg") lowering target.
+# ============================================================================
 fun dolet_panic(msg: str):
     print(msg)
+    __print_stack_trace()
     Process.exit(101)
