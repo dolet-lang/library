@@ -7,6 +7,7 @@ load std/string
 load std/fileIO
 load std/system
 load std/panic
+load std/thread
 
 # Selective import mapping — platform-neutral
 expose std/io as io
@@ -42,3 +43,4 @@ export println
 export print_no_newline
 export flush
 export File
+export Thread

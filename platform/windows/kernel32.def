@@ -51,3 +51,6 @@ EXPORTS
     CreatePipe
     SetHandleInformation
     PeekNamedPipe
+    CreateThread
+    SwitchToThread
+    GetCurrentThreadId

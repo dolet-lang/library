@@ -43,3 +43,16 @@ extern lib "kernel32":
     fun FindFirstFileA(lpFileName: str, lpFindFileData: i64) -> i64
     fun FindNextFileA(hFindFile: i64, lpFindFileData: i64) -> i32
     fun FindClose(hFindFile: i64) -> i32
+    # Threading APIs (C3 — std/thread.dlt builds on these)
+    # CreateThread signature:
+    #   lpThreadAttributes : LPSECURITY_ATTRIBUTES (NULL = default)
+    #   dwStackSize        : 0 = default 1 MiB stack
+    #   lpStartAddress     : LPTHREAD_START_ROUTINE = fun(LPVOID) -> DWORD
+    #   lpParameter        : LPVOID  passed verbatim to start_routine
+    #   dwCreationFlags    : 0 = run immediately, CREATE_SUSPENDED = 0x4
+    #   lpThreadId         : optional out param (NULL OK)
+    # Returns: thread handle (0 on failure — use GetLastError)
+    fun CreateThread(lpThreadAttributes: i64, dwStackSize: i64, lpStartAddress: i64, lpParameter: i64, dwCreationFlags: i32, lpThreadId: i64) -> i64
+    # Voluntarily yield CPU; returns 0 if no other thread to run, else 1.
+    fun SwitchToThread() -> i32
+    fun GetCurrentThreadId() -> i32
