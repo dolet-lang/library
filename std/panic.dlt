@@ -1,13 +1,9 @@
-# panic.dlt — Runtime helper for the `panic "msg"` keyword.
+# panic.dlt — Runtime helper for the `panic("msg")` keyword.
 #
-# The compiler lowers `panic "msg"` to a call to `dolet_panic(msg)`.
-# This function:
-#   1. Prints `[panic] msg` to stdout.
-#   2. Calls Process.exit(101) to terminate (matches Rust's panic
-#      exit code, distinct from the generic `1` that the compiler's
-#      internal `fun panic` (in parser_core / codegen_core) uses for
-#      compile-time errors).
+# The compiler lowers `panic("msg")` to a call to `dolet_panic(msg)`
+# where msg already carries the `[panic at FILE:LINE]` prefix that
+# was injected at codegen time. This helper just prints + exits 101.
 
 fun dolet_panic(msg: str):
-    print("[panic] " + msg)
+    print(msg)
     Process.exit(101)
