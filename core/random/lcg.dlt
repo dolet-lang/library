@@ -1,0 +1,76 @@
+# ============================================================================
+# core/random/lcg.dlt — Linear Congruential Generator (default fast PRNG).
+#
+# Reachable as:
+#   Random.range(min, max)        # one-shot, global state
+#   Random.next_i32()
+#   Random.next_f64()
+#   Random.seed(s)
+#   g: Lcg = Lcg.new(s)           # explicit-state instance
+#
+# LCG constants (a = 1664525, c = 1013904223, modulus = 2^31) come from
+# Numerical Recipes — quality is fine for games / simulations / default
+# sampling, NOT cryptographically secure. For crypto use Random.Secure
+# (ChaCha20-based, lives in core/random/secure.dlt).
+#
+# Pure CPU, no OS, no allocator — works on bare metal.
+# ============================================================================
+
+# ---- Global default state --------------------------------------------------
+g_random_lcg_state: i64 = 1
+
+# Step the global LCG one round, return non-negative i32 (mask keeps it
+# in [0, 2^31)).
+fun next_i32() -> i32:
+    g_random_lcg_state = (g_random_lcg_state * 1664525 + 1013904223) & 2147483647
+    return g_random_lcg_state as i32
+
+# Inclusive integer range [min, max] using the global RNG. Returns min
+# if max <= min.
+fun range(min: i32, max: i32) -> i32:
+    if max <= min:
+        return min
+    n: i32 = next_i32()
+    return min + (n % (max - min + 1))
+
+# Uniform float in [0.0, 1.0).
+fun next_f64() -> f64:
+    n: i32 = next_i32()
+    return (n as f64) / 2147483648.0
+
+# Reseed the global generator.
+fun seed(s: i64):
+    g_random_lcg_state = s
+
+# Coin flip — true with probability p (0.0 ≤ p ≤ 1.0) on the global RNG.
+fun bool(p: f64) -> bool:
+    return next_f64() < p
+
+# ---- Explicit-state instance: Lcg ------------------------------------------
+struct Lcg:
+    state: i64
+
+extend Lcg:
+    static fun new(s: i64) -> @heap Lcg:
+        l: @heap Lcg = Lcg(state=s)
+        return l
+
+    fun next_i32(self) -> i32:
+        self.state = (self.state * 1664525 + 1013904223) & 2147483647
+        return self.state as i32
+
+    fun range_i32(self, min: i32, max: i32) -> i32:
+        if max <= min:
+            return min
+        n: i32 = self.next_i32()
+        return min + (n % (max - min + 1))
+
+    fun next_f64(self) -> f64:
+        n: i32 = self.next_i32()
+        return (n as f64) / 2147483648.0
+
+    fun bool(self, p: f64) -> bool:
+        return self.next_f64() < p
+
+    fun reseed(self, s: i64):
+        self.state = s

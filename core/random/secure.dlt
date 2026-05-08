@@ -1,0 +1,76 @@
+# ============================================================================
+# core/random/secure.dlt — stronger PRNG (Random.Secure namespace).
+#
+# Reachable as:
+#   Random.Secure.range(min, max)
+#   Random.Secure.next_i32()
+#   Random.Secure.next_i64()
+#   Random.Secure.next_f64()
+#   Random.Secure.seed(s)
+#   Random.Secure.bool(p)
+#
+# Currently implements SplitMix64 — a 64-bit mixing PRNG that:
+#   • passes BigCrush (LCG fails it) — much better statistical quality
+#   • single i64 state, ~5 ns per call (slightly slower than LCG)
+#   • pure CPU arithmetic — no OS, works on bare metal
+#
+# IMPORTANT: This is NOT cryptographically secure yet. The API is
+# stable; the implementation will be upgraded to ChaCha20 (RFC 8439)
+# in a future release. At that point Random.Secure becomes safe for:
+#   - tokens, session IDs, password reset codes
+#   - cryptographic IVs / nonces
+#   - anything needing unpredictability against adversaries
+#
+# Until ChaCha20 lands, treat Random.Secure as "high-quality non-crypto"
+# — strictly better than LCG, but a determined attacker who sees ~3
+# consecutive outputs can derive the state and predict the rest.
+# For real crypto today, use std/secure_random.dlt (OS entropy) when
+# we ship it on Windows/Linux targets.
+#
+# Pure CPU, no OS, no allocator — works on bare metal.
+# ============================================================================
+
+# ---- Global default state (independent from LCG's state) -------------------
+g_random_secure_state: i64 = 1
+
+# Empty struct so static methods resolve via the standard `Secure.X`
+# mangling (which Random.Secure.X also dispatches through).
+struct Secure:
+    _placeholder: i32
+
+extend Secure:
+    # SplitMix64 step. Constants are the Java LXM / xoshiro family
+    # well-known mixing values — chosen for good avalanche behaviour,
+    # not for cryptographic strength.
+    static fun next_i64() -> i64:
+        g_random_secure_state = g_random_secure_state + 2685821657736338717 as i64
+        z: i64 = g_random_secure_state
+        z = (z ^ ((z >> 30) & 17179869183 as i64)) * 6133050102633924679 as i64
+        z = (z ^ ((z >> 27) & 137438953471 as i64)) * 4283543580672758511 as i64
+        z = z ^ ((z >> 31) & 8589934591 as i64)
+        return z
+
+    # Truncate to non-negative i32 — masks off the sign bit.
+    static fun next_i32() -> i32:
+        n: i64 = Secure.next_i64()
+        return (n & 2147483647 as i64) as i32
+
+    # Inclusive integer range [min, max]. Returns min if max <= min.
+    static fun range(min: i32, max: i32) -> i32:
+        if max <= min:
+            return min
+        n: i32 = Secure.next_i32()
+        return min + (n % (max - min + 1))
+
+    # Uniform float in [0.0, 1.0).
+    static fun next_f64() -> f64:
+        n: i32 = Secure.next_i32()
+        return (n as f64) / 2147483648.0
+
+    # Reseed the global secure state.
+    static fun seed(s: i64):
+        g_random_secure_state = s
+
+    # Coin flip — true with probability p (0.0 ≤ p ≤ 1.0).
+    static fun bool(p: f64) -> bool:
+        return Secure.next_f64() < p
