@@ -1,0 +1,96 @@
+requires std/thread
+# ============================================================================
+# AtomicI32 / AtomicI64 — lock-free shared state.
+#
+# Built directly on the compiler's atomic intrinsics (codegen_access.dlt
+# `gen_atomic_intrinsic` lowers them to MLIR atomicrmw / cmpxchg / load
+# atomic / store atomic with seq_cst ordering). Every method here is a
+# thin wrapper that hands the storage address to the right intrinsic —
+# the user-facing API stays in pure Dolet.
+#
+# Why TWO struct types instead of generic `Atomic<T>`:
+#   Specialized extends like `extend Atomic<i32>` and `extend Atomic<i64>`
+#   currently mangle both to `@Atomic_load` (no T in the symbol name)
+#   and the linker rejects the duplicate. Two named structs avoid that
+#   and read fine at use sites: `counter: AtomicI32 = AtomicI32.new(0)`.
+#   When the codegen mangler grows T-aware naming we can collapse them
+#   into a single `Atomic<T>` facade — same library, same intrinsics.
+#
+# Why heap-only:
+#   AtomicI32.new returns `@heap AtomicI32` because the storage address
+#   has to stay stable across thread spawns. A stack-allocated atomic
+#   would dangle the moment its owning fn returned, exactly the same
+#   reason closures that escape need `@heap`.
+#
+# Performance:
+#   Each method lowers to a single CPU instruction on x86_64
+#   (lock cmpxchg / lock xadd / mov + lock); call overhead disappears
+#   after LLVM inlines the wrapper.
+#
+# Limitations (intentional, can be lifted later):
+#   - Only i32 / i64 widths.
+#   - SeqCst ordering only. Acquire/Release/Relaxed will be a separate
+#     family of intrinsics (`__atomic_load_relaxed_i32`, etc.).
+#   - No floats: f32/f64 atomics are easy to misuse (NaN-unsafe).
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# AtomicI32
+# --------------------------------------------------------------------------
+struct AtomicI32:
+    storage: i32
+
+extend AtomicI32:
+    static fun new(initial: i32) -> @heap AtomicI32:
+        a: @heap AtomicI32 = AtomicI32(storage=initial)
+        return a
+
+    fun load(self) -> i32:
+        return __atomic_load_i32(self as i64)
+
+    fun store(self, v: i32):
+        __atomic_store_i32(self as i64, v)
+
+    # Returns the value BEFORE the add — matches C11 / Rust semantics.
+    fun fetch_add(self, delta: i32) -> i32:
+        return __atomic_fetch_add_i32(self as i64, delta)
+
+    fun fetch_sub(self, delta: i32) -> i32:
+        return __atomic_fetch_sub_i32(self as i64, delta)
+
+    fun swap(self, v: i32) -> i32:
+        return __atomic_swap_i32(self as i64, v)
+
+    # Returns true iff the storage held `expected` at the moment of the
+    # CAS and was successfully updated to `desired`.
+    fun cas(self, expected: i32, desired: i32) -> bool:
+        return __atomic_cas_i32(self as i64, expected, desired)
+
+# --------------------------------------------------------------------------
+# AtomicI64
+# --------------------------------------------------------------------------
+struct AtomicI64:
+    storage: i64
+
+extend AtomicI64:
+    static fun new(initial: i64) -> @heap AtomicI64:
+        a: @heap AtomicI64 = AtomicI64(storage=initial)
+        return a
+
+    fun load(self) -> i64:
+        return __atomic_load_i64(self as i64)
+
+    fun store(self, v: i64):
+        __atomic_store_i64(self as i64, v)
+
+    fun fetch_add(self, delta: i64) -> i64:
+        return __atomic_fetch_add_i64(self as i64, delta)
+
+    fun fetch_sub(self, delta: i64) -> i64:
+        return __atomic_fetch_sub_i64(self as i64, delta)
+
+    fun swap(self, v: i64) -> i64:
+        return __atomic_swap_i64(self as i64, v)
+
+    fun cas(self, expected: i64, desired: i64) -> bool:
+        return __atomic_cas_i64(self as i64, expected, desired)
