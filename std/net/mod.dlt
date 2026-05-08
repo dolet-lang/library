@@ -1,0 +1,15 @@
+# ============================
+#  Net Module Entry Point
+# ============================
+# Networking primitives: TCP sockets and HTTP. Lives at std/net/ so
+# users get the Rust-style `import net` path. The platform-specific
+# socket calls go through NativeCall (Winsock on Windows, raw socket
+# syscalls on Linux).
+module std.net
+load std/net/socket
+load std/net/http
+
+# Exported symbols
+export TcpSocket
+export Request
+export Http

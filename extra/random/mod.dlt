@@ -1,5 +1,0 @@
-module extra.random
-load extra/random/random
-
-# Exported symbols
-export Rand

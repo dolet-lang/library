@@ -1,17 +1,17 @@
 module std
 load std/io
-load core/types/collections
-load core/types/option
-load core/types/result
+load core/collections
+load core/option
+load core/result
 load std/string
-load std/fileIO
+load std/file
 load std/system
 load std/panic
 load std/thread
 
 # Selective import mapping — platform-neutral
 expose std/io as io
-expose core/types/collections as collections
+expose core/collections as collections
 
 # Exported symbols — public API
 export Memory

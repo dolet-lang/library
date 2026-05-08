@@ -23,7 +23,6 @@ module platform/mod as platform
 # System / OS-specific (now under platform/<os>/)
 module platform/windows/mod as sys.windows
 
-# Extra libraries
-module extra/math/mod as extra.math
-module extra/net/mod as extra.net
-module extra/random/mod as extra.random
+# Networking — lives at std/net/ as a multi-file module (socket, http,
+# tcp, tls, websocket). User imports it as `import net`.
+module std/net/mod as net
