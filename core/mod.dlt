@@ -3,9 +3,9 @@ load core/memory
 load core/arena
 load core/str
 load core/atomic
-load core/random/mod
 load core/random/lcg
 load core/random/secure
+load core/random/random
 load core/integers
 load core/floats
 load core/primitives

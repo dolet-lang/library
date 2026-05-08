@@ -1,0 +1,45 @@
+# ============================================================================
+# core/random/random.dlt — public API: struct Random.
+#
+# Thin facade. Every method delegates to either:
+#   - lcg.dlt   (default fast path: Random.range / .seed / .next_*)
+#   - secure.dlt's struct Secure (3-level reach: Random.Secure.X)
+#
+# The struct itself carries no state — all randomness lives in the
+# global state inside lcg.dlt / secure.dlt. The struct exists so the
+# library API surface is grep-able: a reader skimming the source sees
+# `struct Random` and immediately knows what `Random.range(...)` is.
+#
+# `Random.Secure.range(...)` is reached via Dolet's static-field +
+# nested-method dispatch — the parser builds nested_method on the
+# Random.Secure prefix and the codegen resolves the call against
+# `Secure_<method>` mangled names directly. struct Secure lives in
+# secure.dlt and exposes the same shape (range, seed, next_*, bool).
+#
+# Pure CPU, no OS, no allocator — works on bare metal.
+# ============================================================================
+struct Random:
+    _placeholder: i32
+
+extend Random:
+    # ---- Default fast path (LCG) ------------------------------------------
+
+    # Inclusive integer range [min, max]. Returns min if max <= min.
+    static fun range(min: i32, max: i32) -> i32:
+        return lcg_range(min, max)
+
+    # Step the global LCG and return the new non-negative i32.
+    static fun next_i32() -> i32:
+        return lcg_next_i32()
+
+    # Uniform float in [0.0, 1.0).
+    static fun next_f64() -> f64:
+        return lcg_next_f64()
+
+    # Reseed the global LCG generator.
+    static fun seed(s: i64):
+        lcg_seed(s)
+
+    # Coin flip — true with probability p (0.0 ≤ p ≤ 1.0).
+    static fun bool(p: f64) -> bool:
+        return lcg_bool(p)

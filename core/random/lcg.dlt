@@ -1,52 +1,49 @@
 # ============================================================================
-# core/random/lcg.dlt — Linear Congruential Generator (default fast PRNG).
+# core/random/lcg.dlt — Linear Congruential Generator implementation.
 #
-# Reachable as:
-#   Random.range(min, max)        # one-shot, global state
-#   Random.next_i32()
-#   Random.next_f64()
-#   Random.seed(s)
-#   g: Lcg = Lcg.new(s)           # explicit-state instance
+# This file holds the LCG ALGORITHM. It is consumed by:
+#   - random.dlt's `struct Random` (delegates Random.X to lcg_X)
+#   - direct callers who want an explicit-state generator via `Lcg`
 #
 # LCG constants (a = 1664525, c = 1013904223, modulus = 2^31) come from
-# Numerical Recipes — quality is fine for games / simulations / default
-# sampling, NOT cryptographically secure. For crypto use Random.Secure
-# (ChaCha20-based, lives in core/random/secure.dlt).
+# Numerical Recipes. Quality is fine for games / simulations / default
+# sampling, NOT cryptographically secure. For stronger output use the
+# Random.Secure path (struct Secure in secure.dlt).
 #
 # Pure CPU, no OS, no allocator — works on bare metal.
 # ============================================================================
 
-# ---- Global default state --------------------------------------------------
+# ---- Global default state (used by Random.X) -------------------------------
 g_random_lcg_state: i64 = 1
 
-# Step the global LCG one round, return non-negative i32 (mask keeps it
-# in [0, 2^31)).
-fun next_i32() -> i32:
+# Internal helpers. Prefixed `lcg_` so random.dlt's struct Random can call
+# them without name clashes against its own static methods.
+
+fun lcg_next_i32() -> i32:
     g_random_lcg_state = (g_random_lcg_state * 1664525 + 1013904223) & 2147483647
     return g_random_lcg_state as i32
 
-# Inclusive integer range [min, max] using the global RNG. Returns min
-# if max <= min.
-fun range(min: i32, max: i32) -> i32:
+fun lcg_range(min: i32, max: i32) -> i32:
     if max <= min:
         return min
-    n: i32 = next_i32()
+    n: i32 = lcg_next_i32()
     return min + (n % (max - min + 1))
 
-# Uniform float in [0.0, 1.0).
-fun next_f64() -> f64:
-    n: i32 = next_i32()
+fun lcg_next_f64() -> f64:
+    n: i32 = lcg_next_i32()
     return (n as f64) / 2147483648.0
 
-# Reseed the global generator.
-fun seed(s: i64):
+fun lcg_seed(s: i64):
     g_random_lcg_state = s
 
-# Coin flip — true with probability p (0.0 ≤ p ≤ 1.0) on the global RNG.
-fun bool(p: f64) -> bool:
-    return next_f64() < p
+fun lcg_bool(p: f64) -> bool:
+    return lcg_next_f64() < p
 
 # ---- Explicit-state instance: Lcg ------------------------------------------
+# Independent per-instance LCG generator. Useful for:
+#   - reproducible test inputs (fixed seed → fixed sequence)
+#   - per-thread randomness without locking the global state
+#   - Monte Carlo simulations where each run needs its own seed
 struct Lcg:
     state: i64
 

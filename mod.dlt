@@ -27,8 +27,8 @@ module platform/windows/mod as sys.windows
 # tcp, tls, websocket). User imports it as `import net`.
 module std/net/mod as net
 
-# Random — Random.range() (LCG default) and Random.Secure.range() for
-# stronger PRNG. Registered here so the parser treats `Random` as a
-# namespace (NS_FUN_CALL / NS_STATIC_METHOD dispatch), enabling the
-# 3-level `Random.Secure.method()` form in user code.
-module core/random/mod as Random
+# Random's `struct Random` lives in core/random/random.dlt and is auto-
+# loaded by core/mod.dlt — no module-name registration needed. The
+# struct's static methods own `Random.X(...)`; the 3-level
+# `Random.Secure.X(...)` reaches struct Secure (in secure.dlt) via
+# Dolet's static-field + nested-method dispatch.
