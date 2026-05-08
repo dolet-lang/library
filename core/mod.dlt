@@ -3,6 +3,7 @@ load core/memory
 load core/arena
 load core/str
 load core/atomic
+load core/random
 load core/integers
 load core/floats
 load core/primitives
@@ -11,6 +12,11 @@ load core/primitives
 export Memory
 export AtomicI32
 export AtomicI64
+export Random
+export rand_seed
+export rand_i32
+export rand_range
+export rand_f64
 export I8
 export I16
 export I32

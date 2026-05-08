@@ -1,0 +1,77 @@
+# ============================================================================
+# Random — pseudorandom number generation (PRNG).
+#
+# Pure CPU, no OS, no allocator — works on bare metal. Uses Numerical
+# Recipes' LCG constants (a = 1664525, c = 1013904223, modulus = 2^31).
+# Quality is fine for games, simulations, default sampling; NOT
+# cryptographically secure — crypto needs OS entropy and will live in
+# a future std/secure_random.dlt that pulls from RtlGenRandom (Win) /
+# /dev/urandom (Linux).
+# ============================================================================
+
+# ---- Random struct: explicit-state generator -------------------------------
+
+struct Random:
+    state: i64
+
+extend Random:
+    # Construct a new generator seeded with `s`. Use a fixed seed for
+    # reproducible output (tests); use Time.now() or similar for varied
+    # output across runs.
+    static fun new(s: i64) -> @heap Random:
+        r: @heap Random = Random(state=s)
+        return r
+
+    # Advance the generator one step. Returns the new state truncated
+    # to i32 (always non-negative because of the mask).
+    fun next_i32(self) -> i32:
+        self.state = (self.state * 1664525 + 1013904223) & 2147483647
+        return self.state as i32
+
+    # Random integer in [min, max] inclusive. Returns min if max <= min.
+    fun range_i32(self, min: i32, max: i32) -> i32:
+        if max <= min:
+            return min
+        n: i32 = self.next_i32()
+        return min + (n % (max - min + 1))
+
+    # Uniform float in [0.0, 1.0).
+    fun next_f64(self) -> f64:
+        n: i32 = self.next_i32()
+        return (n as f64) / 2147483648.0
+
+    # Coin flip — true with probability p (0.0 ≤ p ≤ 1.0).
+    fun bool(self, p: f64) -> bool:
+        return self.next_f64() < p
+
+    # Re-seed the generator.
+    fun reseed(self, s: i64):
+        self.state = s
+
+# ---- Global default RNG ----------------------------------------------------
+# Convenience for one-shot use. Stored in a global, NOT thread-safe by
+# itself — wrap with a Mutex (when Mutex<T> ships) or keep one Random
+# per thread for multi-threaded programs.
+
+g_rand_state: i64 = 1
+
+# Seed the global generator.
+fun rand_seed(s: i64):
+    g_rand_state = s
+
+# One step of the global LCG, returning a non-negative i32.
+fun rand_i32() -> i32:
+    g_rand_state = (g_rand_state * 1664525 + 1013904223) & 2147483647
+    return g_rand_state as i32
+
+# Inclusive integer range using the global RNG.
+fun rand_range(min: i32, max: i32) -> i32:
+    if max <= min:
+        return min
+    n: i32 = rand_i32()
+    return min + (n % (max - min + 1))
+
+# Float in [0.0, 1.0) using the global RNG.
+fun rand_f64() -> f64:
+    n: i32 = rand_i32()
+    return (n as f64) / 2147483648.0
