@@ -8,7 +8,6 @@ load std/fileIO
 load std/system
 load std/panic
 load std/thread
-load std/atomic
 
 # Selective import mapping — platform-neutral
 expose std/io as io
@@ -45,5 +44,3 @@ export print_no_newline
 export flush
 export File
 export Thread
-export AtomicI32
-export AtomicI64

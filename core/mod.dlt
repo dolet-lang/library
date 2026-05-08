@@ -2,12 +2,15 @@ module core
 load core/memory
 load core/arena
 load core/str_ops
+load core/atomic
 load core/types/integers
 load core/types/floats
 load core/types/primitives
 
 # Exported symbols
 export Memory
+export AtomicI32
+export AtomicI64
 export I8
 export I16
 export I32

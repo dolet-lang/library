@@ -1,6 +1,11 @@
-requires std/thread
 # ============================================================================
 # AtomicI32 / AtomicI64 — lock-free shared state.
+#
+# Lives in core/ because every method lowers to a single CPU instr
+# (lock cmpxchg, lock xadd, etc.) — no OS, no allocator, no threading
+# runtime required. Atomics work on bare metal, single-core systems,
+# anywhere a real CPU runs. They're a foundation primitive on the
+# same level as Memory.read_i32 and Math.abs, not a std-level service.
 #
 # Built directly on the compiler's atomic intrinsics (codegen_access.dlt
 # `gen_atomic_intrinsic` lowers them to MLIR atomicrmw / cmpxchg / load
