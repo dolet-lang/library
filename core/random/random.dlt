@@ -25,11 +25,12 @@ struct Random:
     _placeholder: i32
 
     # Composition: namespaces the stronger PRNG under `Random.secure`.
-    # Field is `static` so callers reach it via the struct (Random.secure)
-    # rather than an instance. The actual methods are static on `Secure`
-    # itself; the codegen's composition-dispatch path rewrites
-    # `Random.secure.X(...)` into `Secure.X(...)` automatically.
-    static secure: Secure = Secure()
+    # Static-field declaration without an initializer — the field's slot
+    # is allocated but never read. Path 3 dispatch only uses the field's
+    # TYPE to look up `Secure.X(...)`, so initializing the slot would
+    # just be noise. The shape signals "this is a namespace marker, not
+    # a real instance".
+    static secure: Secure
 
     # Step the global LCG and return the new non-negative i32.
     static fun next_i32() -> i32:
