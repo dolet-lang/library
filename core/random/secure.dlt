@@ -1,13 +1,19 @@
 # ============================================================================
-# core/random/secure.dlt — stronger PRNG (Random.Secure namespace).
+# core/random/secure.dlt — struct Secure (stronger PRNG).
 #
-# Reachable as:
-#   Random.Secure.range(min, max)
-#   Random.Secure.next_i32()
-#   Random.Secure.next_i64()
-#   Random.Secure.next_f64()
-#   Random.Secure.seed(s)
-#   Random.Secure.bool(p)
+# Reach (via Random's composition field — see random.dlt):
+#   Random.secure.range(min, max)
+#   Random.secure.next_i32()
+#   Random.secure.next_i64()
+#   Random.secure.next_f64()
+#   Random.secure.seed(s)
+#   Random.secure.bool(p)
+#
+# `Secure` is a regular top-level struct. `Random` holds a static
+# `secure: Secure = Secure()` field; calling `Random.secure.X(...)`
+# dispatches via the codegen's composition path to `Secure.X(...)`
+# directly. No magic dotted struct names, no `struct A.B:` syntax —
+# just two plain structs and a static field.
 #
 # Currently implements SplitMix64 — a 64-bit mixing PRNG that:
 #   • passes BigCrush (LCG fails it) — much better statistical quality
@@ -16,29 +22,19 @@
 #
 # IMPORTANT: This is NOT cryptographically secure yet. The API is
 # stable; the implementation will be upgraded to ChaCha20 (RFC 8439)
-# in a future release. At that point Random.Secure becomes safe for:
-#   - tokens, session IDs, password reset codes
-#   - cryptographic IVs / nonces
-#   - anything needing unpredictability against adversaries
-#
-# Until ChaCha20 lands, treat Random.Secure as "high-quality non-crypto"
-# — strictly better than LCG, but a determined attacker who sees ~3
-# consecutive outputs can derive the state and predict the rest.
-# For real crypto today, use std/secure_random.dlt (OS entropy) when
-# we ship it on Windows/Linux targets.
+# in a future release. Until then, treat as "high-quality non-crypto" —
+# better than LCG, but a determined attacker who sees ~3 consecutive
+# outputs can derive the state and predict the rest.
 #
 # Pure CPU, no OS, no allocator — works on bare metal.
 # ============================================================================
 
-# ---- Global default state (independent from LCG's state) -------------------
+# ---- Global Secure state (used by every Secure.X call) ---------------------
 g_random_secure_state: i64 = 1
 
-# Empty struct so static methods resolve via the standard `Secure.X`
-# mangling (which Random.Secure.X also dispatches through).
 struct Secure:
     _placeholder: i32
 
-extend Secure:
     # SplitMix64 step. Constants are the Java LXM / xoshiro family
     # well-known mixing values — chosen for good avalanche behaviour,
     # not for cryptographic strength.

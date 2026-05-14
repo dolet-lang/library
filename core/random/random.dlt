@@ -1,45 +1,57 @@
 # ============================================================================
-# core/random/random.dlt — public API: struct Random.
+# core/random/random.dlt — struct Random (default fast path).
 #
-# Thin facade. Every method delegates to either:
-#   - lcg.dlt   (default fast path: Random.range / .seed / .next_*)
-#   - secure.dlt's struct Secure (3-level reach: Random.Secure.X)
+# Reach:
+#   Random.range(min, max)   Random.next_i32()   Random.next_f64()
+#   Random.seed(s)           Random.bool(p)
 #
-# The struct itself carries no state — all randomness lives in the
-# global state inside lcg.dlt / secure.dlt. The struct exists so the
-# library API surface is grep-able: a reader skimming the source sees
-# `struct Random` and immediately knows what `Random.range(...)` is.
+# For higher-quality output:
+#   Random.secure.range(...)   etc. — resolved via the static `secure`
+#   field below; the codegen's composition-dispatch path forwards each
+#   call directly to `Secure.X(...)` in core/random/secure.dlt.
 #
-# `Random.Secure.range(...)` is reached via Dolet's static-field +
-# nested-method dispatch — the parser builds nested_method on the
-# Random.Secure prefix and the codegen resolves the call against
-# `Secure_<method>` mangled names directly. struct Secure lives in
-# secure.dlt and exposes the same shape (range, seed, next_*, bool).
+# Implements a Linear Congruential Generator (LCG):
+#   state = (state * 1664525 + 1013904223) & 0x7FFFFFFF
+# Constants from Numerical Recipes. Quality is fine for games /
+# simulations / default sampling — NOT cryptographically secure.
 #
 # Pure CPU, no OS, no allocator — works on bare metal.
 # ============================================================================
+
+# ---- Global LCG state (used by every Random.X call) ------------------------
+g_random_lcg_state: i64 = 1
+
 struct Random:
     _placeholder: i32
 
-extend Random:
-    # ---- Default fast path (LCG) ------------------------------------------
-
-    # Inclusive integer range [min, max]. Returns min if max <= min.
-    static fun range(min: i32, max: i32) -> i32:
-        return lcg_range(min, max)
+    # Composition: namespaces the stronger PRNG under `Random.secure`.
+    # Field is `static` so callers reach it via the struct (Random.secure)
+    # rather than an instance. The actual methods are static on `Secure`
+    # itself; the codegen's composition-dispatch path rewrites
+    # `Random.secure.X(...)` into `Secure.X(...)` automatically.
+    static secure: Secure = Secure()
 
     # Step the global LCG and return the new non-negative i32.
     static fun next_i32() -> i32:
-        return lcg_next_i32()
+        g_random_lcg_state = (g_random_lcg_state * 1664525 + 1013904223) & 2147483647
+        return g_random_lcg_state as i32
+
+    # Inclusive integer range [min, max]. Returns min if max <= min.
+    static fun range(min: i32, max: i32) -> i32:
+        if max <= min:
+            return min
+        n: i32 = Random.next_i32()
+        return min + (n % (max - min + 1))
 
     # Uniform float in [0.0, 1.0).
     static fun next_f64() -> f64:
-        return lcg_next_f64()
+        n: i32 = Random.next_i32()
+        return (n as f64) / 2147483648.0
 
-    # Reseed the global LCG generator.
+    # Reseed the global generator.
     static fun seed(s: i64):
-        lcg_seed(s)
+        g_random_lcg_state = s
 
     # Coin flip — true with probability p (0.0 ≤ p ≤ 1.0).
     static fun bool(p: f64) -> bool:
-        return lcg_bool(p)
+        return Random.next_f64() < p

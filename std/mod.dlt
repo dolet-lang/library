@@ -3,11 +3,11 @@ load std/io
 load core/collections
 load core/option
 load core/result
-load std/string
 load std/file
 load std/system
 load std/panic
 load std/thread
+load std/mutex
 
 # Selective import mapping — platform-neutral
 expose std/io as io
@@ -44,3 +44,4 @@ export print_no_newline
 export flush
 export File
 export Thread
+export Mutex

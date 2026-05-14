@@ -42,13 +42,17 @@
 # --------------------------------------------------------------------------
 # AtomicI32
 # --------------------------------------------------------------------------
+# `@heap struct` annotation on the type tells the compiler EVERY instance
+# of AtomicI32 lives on the heap. The constructor `AtomicI32(storage=N)`
+# now allocates via Memory.malloc automatically — the user writes
+# `: AtomicI32` everywhere with no `@heap` qualifier needed.
+@heap
 struct AtomicI32:
     storage: i32
 
-extend AtomicI32:
-    static fun new(initial: i32) -> @heap AtomicI32:
-        a: @heap AtomicI32 = AtomicI32(storage=initial)
-        return a
+group AtomicI32:
+    static fun new(initial: i32) -> AtomicI32:
+        return AtomicI32(storage=initial)
 
     fun load(self) -> i32:
         return __atomic_load_i32(self as i64)
@@ -72,15 +76,15 @@ extend AtomicI32:
         return __atomic_cas_i32(self as i64, expected, desired)
 
 # --------------------------------------------------------------------------
-# AtomicI64
+# AtomicI64 — same `@heap struct` pattern
 # --------------------------------------------------------------------------
+@heap
 struct AtomicI64:
     storage: i64
 
-extend AtomicI64:
-    static fun new(initial: i64) -> @heap AtomicI64:
-        a: @heap AtomicI64 = AtomicI64(storage=initial)
-        return a
+group AtomicI64:
+    static fun new(initial: i64) -> AtomicI64:
+        return AtomicI64(storage=initial)
 
     fun load(self) -> i64:
         return __atomic_load_i64(self as i64)

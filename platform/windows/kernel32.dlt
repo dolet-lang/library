@@ -56,3 +56,13 @@ extern lib "kernel32":
     # Voluntarily yield CPU; returns 0 if no other thread to run, else 1.
     fun SwitchToThread() -> i32
     fun GetCurrentThreadId() -> i32
+    # CRITICAL_SECTION lock primitive — std/mutex.dlt builds on these.
+    # CRITICAL_SECTION is an opaque 40-byte struct on x64; caller allocates
+    # the storage (e.g. Memory.malloc(40)) and passes the address here.
+    # All four take a pointer to the CRITICAL_SECTION storage.
+    fun InitializeCriticalSection(lpCriticalSection: i64)
+    fun DeleteCriticalSection(lpCriticalSection: i64)
+    fun EnterCriticalSection(lpCriticalSection: i64)
+    fun LeaveCriticalSection(lpCriticalSection: i64)
+    # Returns non-zero iff the lock was acquired without blocking.
+    fun TryEnterCriticalSection(lpCriticalSection: i64) -> i32

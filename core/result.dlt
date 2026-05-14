@@ -87,7 +87,7 @@ fun Err_i64(e: i64) -> result<i64, i64>:
 # ============================================================
 
 # Qualified constructor syntax — `Result.Ok(v)` / `Result.Err(msg)`.
-extend Result:
+group Result:
     static fun Ok(v: i32) -> result<i32, str>:
         a: i64 = Memory.malloc(24 as i64)
         Memory.write_i32(a, 0)
@@ -128,7 +128,7 @@ extend Result:
         Memory.write_i64(a + 16, e as i64)
         return a as result<i64, str>
 
-extend result:
+group result:
     fun is_ok(self) -> bool:
         addr: i64 = self as i64
         return Memory.read_i32(addr) == 0

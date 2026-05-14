@@ -4,7 +4,7 @@
 
 requires platform/linux/syscalls
 
-extend Memory:
+group Memory:
     # Allocate uninitialized memory
     static fun malloc(size: i64) -> ptr:
         result: i64 = dsl_malloc(size)

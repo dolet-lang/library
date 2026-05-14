@@ -2,8 +2,10 @@ module core
 load core/memory
 load core/arena
 load core/str
+load core/string
 load core/atomic
-load core/random/lcg
+# secure first — random.dlt declares `static secure: Secure = Secure()`
+# which needs `struct Secure` already in scope.
 load core/random/secure
 load core/random/random
 load core/integers
@@ -12,9 +14,11 @@ load core/primitives
 
 # Exported symbols
 export Memory
+export Str
+export str_join
 export AtomicI32
 export AtomicI64
-export Lcg
+export Random
 export Secure
 export range
 export seed

@@ -54,3 +54,8 @@ EXPORTS
     CreateThread
     SwitchToThread
     GetCurrentThreadId
+    InitializeCriticalSection
+    DeleteCriticalSection
+    EnterCriticalSection
+    LeaveCriticalSection
+    TryEnterCriticalSection

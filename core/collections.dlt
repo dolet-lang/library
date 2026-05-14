@@ -31,7 +31,7 @@ type map = Map
 # Elements in data array: 8-byte slots at data + (index * 8)
 # ============================================================
 
-extend list:
+group list:
     # ==================== Query ====================
 
     fun size(self) -> i64:
@@ -485,7 +485,7 @@ extend list:
 # Fixed-size: no append/remove
 # ============================================================
 
-extend array:
+group array:
     # ==================== Query ====================
 
     fun size(self) -> i64:
@@ -685,7 +685,7 @@ extend array:
 # Keys are str pointers, values stored as i64
 # ============================================================
 
-extend map:
+group map:
     # ==================== Query ====================
 
     fun size(self) -> i64:
