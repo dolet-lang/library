@@ -25,12 +25,12 @@ struct Random:
     _placeholder: i32
 
     # Composition: namespaces the stronger PRNG under `Random.secure`.
-    # Static-field declaration without an initializer — the field's slot
-    # is allocated but never read. Path 3 dispatch only uses the field's
-    # TYPE to look up `Secure.X(...)`, so initializing the slot would
-    # just be noise. The shape signals "this is a namespace marker, not
-    # a real instance".
-    static secure: Secure
+    # `= Secure()` follows the standard OOP convention for static fields —
+    # every reader (and every other OOP language) expects an initializer
+    # here. The slot is zero-initialized via the trivial Secure() ctor;
+    # Path 3 dispatch only uses the field's TYPE, but the explicit init
+    # future-proofs us if instance-method dispatch is added later.
+    static secure: Secure = Secure()
 
     # Step the global LCG and return the new non-negative i32.
     static fun next_i32() -> i32:
