@@ -11,7 +11,7 @@ g_alloc_free_count:   i64 = 0
 g_alloc_malloc_bytes: i64 = 0
 g_alloc_free_bytes:   i64 = 0
 
-group Memory:
+impl Memory:
     # Allocate uninitialized memory
     static fun malloc(size: i64) -> ptr:
         heap: i64 = GetProcessHeap()

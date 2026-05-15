@@ -21,7 +21,7 @@ type char = Char
 type ptr = Pointer
 type str = StrType
 
-group bool:
+impl bool:
     fun to_str(self) -> str:
         return Convert.bool_to_str(self)
 
@@ -30,7 +30,7 @@ group bool:
 # T is a phantom type parameter (erased at MLIR level).
 # All pointers are !llvm.ptr underneath.
 
-group ptr:
+impl ptr:
     # --- Static constructors ---
 
     fun of(addr: i64) -> i64:

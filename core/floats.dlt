@@ -11,7 +11,7 @@ struct F64:
 type f32 = F32
 type f64 = F64
 
-group f64:
+impl f64:
     fun floor(self) -> i64:
         return self as i64
 
@@ -29,6 +29,6 @@ group f64:
     fun to_str(self) -> str:
         return Convert.f64_to_str(self)
 
-group f32:
+impl f32:
     fun to_str(self) -> str:
         return Convert.f32_to_str(self)

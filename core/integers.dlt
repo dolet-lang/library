@@ -55,7 +55,7 @@ type u64 = U64
 type u128 = U128
 
 # Methods on i32
-group i32:
+impl i32:
     fun abs(self) -> i32:
         if self < 0:
             return 0 - self
@@ -85,7 +85,7 @@ group i32:
         return Convert.i32_to_str(self)
 
 # Methods on i64
-group i64:
+impl i64:
     fun abs(self) -> i64:
         if self < 0:
             return 0 - self

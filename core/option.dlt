@@ -70,7 +70,7 @@ fun None() -> option<i64>:
 # Qualified constructor syntax — `Option.Some(v)` / `Option.None()`
 # aligns with Dolet's `Module.method` idiom (File.open, Memory.malloc).
 # The bare `Some(v)` / `None()` forms still work via top-level fns.
-group Option:
+impl Option:
     static fun Some(v: i32) -> option<i32>:
         a: i64 = Memory.malloc(16 as i64)
         Memory.write_i32(a, 0)
@@ -105,7 +105,7 @@ group Option:
         Memory.write_i64(a + 8, 0 as i64)
         return a as Option<i64>
 
-group option:
+impl option:
     fun is_some(self) -> bool:
         addr: i64 = self as i64
         return Memory.read_i32(addr) == 0

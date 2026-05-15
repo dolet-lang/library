@@ -41,7 +41,7 @@ fun __thread_entry(env: i64) -> i32:
 struct Thread:
     handle: i64
 
-group Thread:
+impl Thread:
     # ------------------------------------------------------------------
     # spawn(f) — start a new OS thread that immediately runs f.
     # The closure must be `@heap`: its env outlives the spawning fn,

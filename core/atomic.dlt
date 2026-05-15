@@ -50,7 +50,7 @@
 struct AtomicI32:
     storage: i32
 
-group AtomicI32:
+impl AtomicI32:
     static fun new(initial: i32) -> AtomicI32:
         return AtomicI32(storage=initial)
 
@@ -82,7 +82,7 @@ group AtomicI32:
 struct AtomicI64:
     storage: i64
 
-group AtomicI64:
+impl AtomicI64:
     static fun new(initial: i64) -> AtomicI64:
         return AtomicI64(storage=initial)
 
