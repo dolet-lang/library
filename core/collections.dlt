@@ -31,7 +31,7 @@ type map = Map
 # Elements in data array: 8-byte slots at data + (index * 8)
 # ============================================================
 
-impl list:
+attach list:
     # ==================== Query ====================
 
     fun size(self) -> i64:
@@ -485,7 +485,7 @@ impl list:
 # Fixed-size: no append/remove
 # ============================================================
 
-impl array:
+attach array:
     # ==================== Query ====================
 
     fun size(self) -> i64:
@@ -685,7 +685,7 @@ impl array:
 # Keys are str pointers, values stored as i64
 # ============================================================
 
-impl map:
+attach map:
     # ==================== Query ====================
 
     fun size(self) -> i64:

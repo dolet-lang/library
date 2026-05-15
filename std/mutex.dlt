@@ -50,7 +50,7 @@ struct Mutex:
     # only needs this one field.
     cs: i64
 
-impl Mutex:
+attach Mutex:
     # ------------------------------------------------------------------
     # new — allocate + initialize the OS lock state.
     # Always pair with destroy() before the Mutex is dropped, otherwise

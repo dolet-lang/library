@@ -504,7 +504,7 @@ struct Str:
 # public-facing ergonomic API lives here; the explicit `Str.X(s)` form is
 # used by stdlib internals and by callers who want module-style spelling.
 # ============================================================================
-impl str:
+attach str:
     fun length(self) -> i64:
         return Memory.strlen(self)
 
