@@ -1,5 +1,6 @@
 module core
 load core/memory
+load core/compiler_rt
 load core/arena
 load core/str
 load core/string

@@ -1,0 +1,52 @@
+##############################
+# Dolet Compiler Runtime (compiler-rt)
+#
+# These are NOT user-facing library functions. They are RUNTIME SUPPORT
+# SYMBOLS that the LLVM backend emits implicitly. LLVM's loop-idiom
+# recognition rewrites simple memory loops (the ones in Memory.set/copy,
+# struct zero-init, large array fills, etc.) into calls to the C-ABI
+# names `memset` / `memcpy` / `memmove`, assuming a freestanding runtime
+# provides them — the same category as `__chkstk` / `_fltused` in
+# resources/runtime_helpers.obj.
+#
+# Dolet is libc-free and targets Windows, Linux, AND baremetal, so no
+# system libc supplies these. We provide them here, in pure Dolet, so the
+# names resolve on EVERY target (including baremetal where there is no OS
+# at all). This is the compiler-rt layer, kept separate from the Memory
+# user API on purpose: Memory.* is the language's memory API; the symbols
+# below exist solely to satisfy backend-generated calls.
+#
+# Implementation note: plain byte loops. LLVM does not recursively rewrite
+# a function named `memset` into a self-call, so these are safe.
+##############################
+
+fun memset(dest: i64, value: i32, count: i64) -> i64:
+    v: i8 = value as i8
+    i: i64 = 0
+    while i < count:
+        Memory.write_i8(dest + i, v)
+        i = i + 1
+    return dest
+
+fun memcpy(dest: i64, src: i64, count: i64) -> i64:
+    i: i64 = 0
+    while i < count:
+        Memory.write_i8(dest + i, Memory.read_i8(src + i))
+        i = i + 1
+    return dest
+
+# Overlap-safe copy: forward when dest precedes src, backward otherwise.
+fun memmove(dest: i64, src: i64, count: i64) -> i64:
+    if dest == src:
+        return dest
+    if dest < src:
+        i: i64 = 0
+        while i < count:
+            Memory.write_i8(dest + i, Memory.read_i8(src + i))
+            i = i + 1
+    else:
+        j: i64 = count - 1
+        while j >= 0:
+            Memory.write_i8(dest + j, Memory.read_i8(src + j))
+            j = j - 1
+    return dest
