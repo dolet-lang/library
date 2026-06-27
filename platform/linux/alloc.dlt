@@ -4,6 +4,21 @@
 
 requires platform/linux/syscalls
 
+# ----------------------------------------------------------------------
+# Scope-arena state (Linux). Real Linux threading is not yet implemented
+# (Thread.spawn returns handle==0 -> serial mode), so a single shared
+# state block is correct here — there are no worker threads to race it.
+# A futex/TLS-backed per-thread block lands with real clone() threads.
+# Layout matches Windows: +0 base, +8 cursor, +16 capacity.
+# ----------------------------------------------------------------------
+g_arena_state_blk: i64 = 0
+
+attach Memory:
+    static fun arena_state() -> i64:
+        if g_arena_state_blk == 0:
+            g_arena_state_blk = dsl_calloc(1, 24)
+        return g_arena_state_blk
+
 attach Memory:
     # Allocate uninitialized memory
     static fun malloc(size: i64) -> ptr:

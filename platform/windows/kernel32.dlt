@@ -81,6 +81,17 @@ extern lib "kernel32":
     fun SetEvent(hEvent: i64) -> i32
     fun ResetEvent(hEvent: i64) -> i32
 
+    # Thread-Local Storage — used by the scope arena so each thread gets
+    # its own bump allocator (the arena cursor is per-thread state; a
+    # single shared global cursor races when parallel_for workers call
+    # arena-bracketed functions). All in kernel32, no extra import lib.
+    #   TlsAlloc() -> slot index (0xFFFFFFFF on failure)
+    #   TlsGetValue(slot) -> stored i64 (0 if never set for this thread)
+    #   TlsSetValue(slot, value) -> nonzero on success
+    fun TlsAlloc() -> i32
+    fun TlsGetValue(dwTlsIndex: i32) -> i64
+    fun TlsSetValue(dwTlsIndex: i32, lpTlsValue: i64) -> i32
+
     # CPU core-count APIs — std/thread_pool.dlt reads Core_Count from these.
     # GetSystemInfo fills a 48-byte SYSTEM_INFO struct on x64; caller
     # allocates the storage (Memory.malloc_zeroed(48)) and passes its address.

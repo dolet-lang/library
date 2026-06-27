@@ -63,3 +63,6 @@ EXPORTS
     CreateEventA
     SetEvent
     ResetEvent
+    TlsAlloc
+    TlsGetValue
+    TlsSetValue

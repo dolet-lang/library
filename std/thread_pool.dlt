@@ -88,6 +88,14 @@ struct ThreadPool:
                             # parked workers immediately (no busy-spin). Backed
                             # by the epoch counter so a missed/spurious wake is
                             # always safe (parker re-checks epoch + timeout).
+    # Reusable per-call scratch for parallel_for, owned by the pool so it
+    # is NEVER malloc/free'd per call (that per-call free was a use-after-
+    # free: a straggler worker could still touch the record/counter after
+    # the caller returned). Grown on demand, freed only at shutdown.
+    pf_arena:    i64        # RANGE-record scratch buffer (pf_arena_cap bytes)
+    pf_arena_cap: i64       # capacity of pf_arena in bytes (0 = unallocated)
+    pf_done:     AtomicI64  # completion counter: workers fetch_add(1) as the
+                            # LAST touch of a chunk; caller waits == num_chunks
 
 attach ThreadPool:
     # ------------------------------------------------------------------
@@ -123,10 +131,11 @@ attach ThreadPool:
         ep:   AtomicI64 = AtomicI64.new(0 as i64)
         mtx:  Mutex     = Mutex.new()
         wev:  ParkEvent = ParkEvent.new()
+        pfd:  AtomicI64 = AtomicI64.new(0 as i64)
 
         # Serial mode: no workers requested. Build a valid empty pool.
         if n <= 0:
-            p0: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev)
+            p0: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev, pf_arena=0, pf_arena_cap=0 as i64, pf_done=pfd)
             p0.state.store(POOL_STATE_RUNNING)
             return p0
 
@@ -139,7 +148,7 @@ attach ThreadPool:
             Memory.free(deques_buf)
             Memory.free(threads_buf)
             Memory.free(envs_buf)
-            ps: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev)
+            ps: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev, pf_arena=0, pf_arena_cap=0 as i64, pf_done=pfd)
             ps.state.store(POOL_STATE_RUNNING)
             return ps
 
@@ -152,7 +161,7 @@ attach ThreadPool:
 
         # Build the pool struct. state := RUNNING is published before any
         # worker can observe the pool (workers are spawned just below).
-        pool: ThreadPool = ThreadPool(num_workers=n, deques=deques_buf, threads=threads_buf, envs=envs_buf, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev)
+        pool: ThreadPool = ThreadPool(num_workers=n, deques=deques_buf, threads=threads_buf, envs=envs_buf, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev, pf_arena=0, pf_arena_cap=0 as i64, pf_done=pfd)
         pool.state.store(POOL_STATE_RUNNING)
 
         # Spawn the worker threads. Each captures the (stable) pool
@@ -203,6 +212,26 @@ attach ThreadPool:
     # ------------------------------------------------------------------
     fun worker_count(self) -> i32:
         return self.num_workers
+
+    # ------------------------------------------------------------------
+    # pf_ensure_arena — return a pool-owned scratch buffer of at least
+    # `bytes`, growing (and reusing) it across parallel_for calls. NEVER
+    # freed per call — only at shutdown — so a straggler worker can never
+    # touch a freed record. Single-threaded use: only the calling thread
+    # of parallel_for touches this, and only while no prior submission is
+    # still in flight (the caller waits for full completion before reuse).
+    # ------------------------------------------------------------------
+    fun pf_ensure_arena(self, bytes: i64) -> i64:
+        if bytes <= self.pf_arena_cap and self.pf_arena != 0:
+            return self.pf_arena
+        if self.pf_arena != 0:
+            Memory.free(self.pf_arena)
+        self.pf_arena = Memory.malloc(bytes) as i64
+        if self.pf_arena == 0:
+            self.pf_arena_cap = 0 as i64
+            return 0
+        self.pf_arena_cap = bytes
+        return self.pf_arena
 
     # ------------------------------------------------------------------
     # steal_from — lock-free steal of one work-item from worker deque
@@ -324,6 +353,14 @@ attach ThreadPool:
         # are joined, so nothing will wait on or signal it again.
         self.wake_event.destroy()
         Memory.free(self.wake_event as i64)
+        # Release the reusable parallel_for scratch (arena buffer + the
+        # completion counter). All workers are joined, so nothing touches
+        # these again.
+        if self.pf_arena != 0:
+            Memory.free(self.pf_arena)
+            self.pf_arena = 0
+            self.pf_arena_cap = 0 as i64
+        Memory.free(self.pf_done as i64)
 
 # ============================================================================
 # Free-standing pool helpers

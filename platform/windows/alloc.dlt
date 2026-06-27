@@ -11,6 +11,44 @@ g_alloc_free_count:   i64 = 0
 g_alloc_malloc_bytes: i64 = 0
 g_alloc_free_bytes:   i64 = 0
 
+# ----------------------------------------------------------------------
+# Thread-local scope-arena state (Windows TLS backing).
+#
+# The scope arena (core/arena.dlt) is a per-thread bump allocator: a
+# single shared global cursor races when parallel_for workers each run
+# arena-bracketed functions (push/pop mutate the cursor concurrently).
+# To make every thread independent, each thread keeps its OWN
+# (base, cursor, capacity) triple in a 24-byte block reached through a
+# TLS slot. core/arena.dlt calls `_arena_state()` to get its thread's
+# block; the platform owns the TLS mechanism (R1.2 layering).
+#
+# Layout of the 24-byte state block:
+#   +0  base      (i64)
+#   +8  cursor    (i64)
+#   +16 capacity  (i64)
+# ----------------------------------------------------------------------
+g_arena_tls_slot: i32 = 0 - 1   # -1 == not yet allocated
+
+attach Memory:
+    # Return this thread's arena-state block, allocating the TLS slot
+    # (once, process-wide) and the per-thread block (once per thread) on
+    # first use. Zero-initialized block => arena treats base==0 as
+    # "needs init". Defined as a Memory.* method so the bootstrap
+    # compiler's `Memory_` arena-exemption prefix already covers it (no
+    # self-recursion through arena bracketing).
+    static fun arena_state() -> i64:
+        if g_arena_tls_slot == 0 - 1:
+            # First-ever call (main thread, before any worker spawns
+            # since the arena is exercised during single-threaded
+            # startup). Claim the TLS slot once.
+            g_arena_tls_slot = TlsAlloc()
+        slot: i32 = g_arena_tls_slot
+        blk: i64 = TlsGetValue(slot)
+        if blk == 0:
+            blk = Memory.malloc_zeroed(24)
+            TlsSetValue(slot, blk)
+        return blk
+
 attach Memory:
     # Allocate uninitialized memory
     static fun malloc(size: i64) -> ptr:

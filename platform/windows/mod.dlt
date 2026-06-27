@@ -48,6 +48,9 @@ export TryEnterCriticalSection
 export CreateEventA
 export SetEvent
 export ResetEvent
+export TlsAlloc
+export TlsGetValue
+export TlsSetValue
 export GetSystemInfo
 export GetActiveProcessorCount
 export CpuInfo

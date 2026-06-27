@@ -43,6 +43,20 @@ requires platform/{platform}/thread
 # `body` MUST be a `@heap fun(i32)` (R11.1): its env crosses the thread
 # boundary into the workers, so it has to outlive the calling frame.
 #
+# PER-FRAME ALLOCATION — IMPORTANT: a `@heap fun(...)` allocates its
+# capture env with `Memory.malloc` and parallel_for does NOT free it (it
+# can't — the caller may reuse the same closure). So creating a FRESH
+# closure inside a hot per-frame loop leaks one env per frame. The
+# engine-correct pattern is to build the closure ONCE outside the loop
+# and feed per-frame state through globals (or a captured buffer
+# pointer), e.g.:
+#     body: @heap fun(i32) = fun(i) update_one(i)   # once
+#     while running:
+#         g_frame_t = now()                          # per-frame state
+#         parallel_for(count, body)
+# Do NOT write `parallel_for(n, fun(i) update(buf, i, t))` inside the
+# loop — that allocates (and leaks) a closure env every frame.
+#
 # Serial fallbacks (R3.3, R3.4, R3.5):
 #   * count <= 0           → return immediately, body never invoked.
 #   * worker_count() == 0  → plain loop on the calling thread; the
@@ -80,18 +94,24 @@ fun parallel_for(count: i32, body: @heap fun(i32)):
     if num_chunks < 1:
         num_chunks = 1
 
-    # Submission arena: one 40-byte RANGE record per chunk. If the
-    # allocation fails, degrade to serial rather than crash (Error
-    # Handling §) — the result is still correct, just not parallel.
-    arena: i64 = Memory.malloc((num_chunks as i64) * 40) as i64
+    # Submission scratch: a pool-owned, reused RANGE-record buffer (one
+    # 40-byte record per chunk) + a pool-owned completion counter. Neither
+    # is freed per call — that per-call free was a use-after-free, since a
+    # straggler worker can still touch a record/counter after the caller
+    # returns. Reuse is safe because the caller below waits for FULL
+    # completion (every worker's last touch) before this call returns, so
+    # the NEXT call only reuses the buffer once no worker references it.
+    arena: i64 = pool.pf_ensure_arena((num_chunks as i64) * 40)
     if arena == 0:
         _parallel_for_serial(count, body)
         return
 
     # `remaining` counts chunks not yet finished. Workers and the caller
     # each fetch_sub(1) as they complete a chunk (the fetch_sub lives in
-    # _pool_execute_item, RANGE branch).
-    remaining: AtomicI64 = AtomicI64.new(num_chunks as i64)
+    # _pool_execute_item, RANGE branch). It is the pool's PERSISTENT
+    # counter, reset to num_chunks for this call.
+    remaining: AtomicI64 = pool.pf_done
+    remaining.store(num_chunks as i64)
     body_ptr: i64 = body as i64
     rem_ptr: i64 = remaining as i64
 
@@ -130,16 +150,24 @@ fun parallel_for(count: i32, body: @heap fun(i32)):
     # Caller participates in draining instead of idling (R7.7).
     _pool_caller_drain(pool, remaining)
 
-    # Belt-and-suspenders: the drain loop already waits for remaining==0,
-    # but spin once more in case a worker held the very last chunk.
+    # Wait until every chunk has completed. `remaining` reaching 0 is the
+    # LAST touch any worker/caller makes to this submission's owned memory
+    # (the fetch_sub in _pool_execute_item is the final statement before a
+    # worker moves on). After this, no thread references `arena` or
+    # `remaining`, so the pool may safely reuse them on the next call.
     while remaining.load() > 0 as i64:
         Thread.yield_now()
 
-    # All chunks done; nothing will touch `remaining` or the arena again.
-    # AtomicI64 has no destroy(); its storage address IS the pointer, so
-    # free it directly. Then release the submission arena (no leaks).
-    Memory.free(remaining as i64)
-    Memory.free(arena)
+    # Belt-and-suspenders: also wait for the pool's `pending` to drain so a
+    # straggler worker that finished our chunk but hasn't looped back is
+    # fully done before we let the caller proceed (it never frees the
+    # scratch now — pool-owned — but this keeps drain accounting clean).
+    while pool.pending.load() > 0 as i64:
+        Thread.yield_now()
+
+    # No per-call free: `arena` and `remaining` are the pool's reusable
+    # scratch, released only at shutdown. This eliminates the back-to-back
+    # use-after-free that crashed closure-in-loop parallel_for.
 
 # ----------------------------------------------------------------------
 # _parallel_for_serial — Serial_Fallback body (R3.4, R3.5). A plain

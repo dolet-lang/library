@@ -1,10 +1,19 @@
 # ============================================================================
 # ScopeArena — per-function bump allocator for transient strings.
 #
-# Layout (single growable buffer for v1):
-#   g_arena_base     — start of the one backing buffer (lazy init)
-#   g_arena_cursor   — next free byte
-#   g_arena_capacity — size of the buffer
+# THREAD-LOCAL state (R7.1 / parallel safety): the (base, cursor,
+# capacity) triple lives in a per-thread 24-byte block reached via
+# `Memory.arena_state()` (platform-provided: Windows TLS, Linux single block
+# until real threads land). A single shared global cursor used to race
+# when parallel_for workers each ran arena-bracketed functions — every
+# function's push/pop mutated one global cursor concurrently, corrupting
+# allocations and crashing. Per-thread state makes each worker fully
+# independent: no shared mutable arena state, no lock needed.
+#
+# State block layout (see platform alloc.dlt _arena_state):
+#   +0  base      — start of this thread's backing buffer (lazy init)
+#   +8  cursor    — next free byte
+#   +16 capacity  — size of the buffer
 #
 # Compiler contract (see codegen_decl.dlt + codegen_stmt.dlt):
 #   Every function body is bracketed with
@@ -18,54 +27,59 @@
 # The push saves the CURRENT cursor; pop restores it. Every allocation
 # between push and pop is effectively freed by one cursor assignment.
 #
-# v1 uses a single 16 MiB buffer backed by Memory.malloc. On overflow the
-# alloc returns 0 (caller must handle — at present _str_plus ignores and
-# returns a bad pointer; this is acceptable for v1 because 16 MiB is
-# more than enough for any practical frame). Bare-metal / chunked growth
-# is a later step and does not require touching this file — only
-# Memory.malloc needs a bare-metal backing (which is how it already works).
+# Each thread gets its own 16 MiB buffer on first use. On overflow the
+# alloc returns 0 (caller must handle).
 # ============================================================================
 
-g_arena_base:     i64 = 0
-g_arena_cursor:   i64 = 0
-g_arena_capacity: i64 = 0
+const ARENA_OFF_BASE:     i64 = 0
+const ARENA_OFF_CURSOR:   i64 = 8
+const ARENA_OFF_CAPACITY: i64 = 16
 
 fun _scope_arena_init():
-    if g_arena_base != 0:
+    st: i64 = Memory.arena_state()
+    if Memory.read_i64(st + ARENA_OFF_BASE) != 0:
         return
-    g_arena_capacity = 16777216        # 16 MiB — generous default
-    g_arena_base = Memory.malloc(g_arena_capacity) as i64
-    g_arena_cursor = g_arena_base
+    cap: i64 = 16777216                # 16 MiB per thread — generous default
+    base: i64 = Memory.malloc(cap) as i64
+    Memory.write_i64(st + ARENA_OFF_BASE, base)
+    Memory.write_i64(st + ARENA_OFF_CURSOR, base)
+    Memory.write_i64(st + ARENA_OFF_CAPACITY, cap)
 
 fun _scope_arena_push() -> i64:
     _scope_arena_init()
-    return g_arena_cursor
+    return Memory.read_i64(Memory.arena_state() + ARENA_OFF_CURSOR)
 
 fun _scope_arena_pop(handle: i64):
     # Discards every byte allocated since the matching push.
     if handle == 0:
         return
-    g_arena_cursor = handle
+    Memory.write_i64(Memory.arena_state() + ARENA_OFF_CURSOR, handle)
 
 fun _scope_arena_alloc(size: i64) -> i64:
     _scope_arena_init()
+    st: i64 = Memory.arena_state()
+    cursor: i64 = Memory.read_i64(st + ARENA_OFF_CURSOR)
     if size <= 0:
-        return g_arena_cursor
+        return cursor
     # 8-byte align
     aligned: i64 = (size + 7) & (0 - 8)
-    result: i64 = g_arena_cursor
-    new_cursor: i64 = g_arena_cursor + aligned
+    result: i64 = cursor
+    new_cursor: i64 = cursor + aligned
+    base: i64 = Memory.read_i64(st + ARENA_OFF_BASE)
+    cap: i64 = Memory.read_i64(st + ARENA_OFF_CAPACITY)
     # Overflow check — caller is expected to detect 0 and fall back
-    if new_cursor > g_arena_base + g_arena_capacity:
+    if new_cursor > base + cap:
         return 0
-    g_arena_cursor = new_cursor
+    Memory.write_i64(st + ARENA_OFF_CURSOR, new_cursor)
     return result
 
 # Diagnostic helpers (useful for probes + tests).
 fun _scope_arena_used() -> i64:
-    if g_arena_base == 0:
+    st: i64 = Memory.arena_state()
+    base: i64 = Memory.read_i64(st + ARENA_OFF_BASE)
+    if base == 0:
         return 0
-    return g_arena_cursor - g_arena_base
+    return Memory.read_i64(st + ARENA_OFF_CURSOR) - base
 
 fun _scope_arena_capacity() -> i64:
-    return g_arena_capacity
+    return Memory.read_i64(Memory.arena_state() + ARENA_OFF_CAPACITY)
