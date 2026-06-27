@@ -66,11 +66,15 @@ fun parallel_for(count: i32, body: @heap fun(i32)):
 
     # ------------------------------------------------------------------
     # Partition [0,count) into chunks. Oversubscribe relative to the
-    # executor count (workers + the participating caller) so that uneven
-    # per-index cost is smoothed out by stealing (R4.4). Never create
-    # more chunks than indices (no empty chunks), always at least one.
+    # executor count (workers + the participating caller) so uneven
+    # per-index cost is smoothed out by stealing (R4.4): finer chunks
+    # let idle executors steal leftover work instead of waiting on one
+    # slow chunk. 16x (vs the original 4x) measurably tightens tail
+    # latency / improves multi-core scaling on real workloads while the
+    # per-chunk atomic overhead stays negligible against any non-trivial
+    # body. Never create more chunks than indices, always at least one.
     # ------------------------------------------------------------------
-    num_chunks: i32 = (workers + 1) * 4
+    num_chunks: i32 = (workers + 1) * 16
     if num_chunks > count:
         num_chunks = count
     if num_chunks < 1:
