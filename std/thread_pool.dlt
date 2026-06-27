@@ -77,7 +77,6 @@ struct ThreadPool:
     pending:     AtomicI64  # count of outstanding (un-drained) work items (R7.3)
     epoch:       AtomicI64  # bumped on submit/shutdown — the lost-wakeup guard
     sleep_mtx:   Mutex      # guards the park decision (re-check pending)
-    steal_mtx:   Mutex      # serializes deque push/steal (mutex-assisted steal)
 
 attach ThreadPool:
     # ------------------------------------------------------------------
@@ -112,11 +111,10 @@ attach ThreadPool:
         pend: AtomicI64 = AtomicI64.new(0 as i64)
         ep:   AtomicI64 = AtomicI64.new(0 as i64)
         mtx:  Mutex     = Mutex.new()
-        smtx: Mutex     = Mutex.new()
 
         # Serial mode: no workers requested. Build a valid empty pool.
         if n <= 0:
-            p0: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, steal_mtx=smtx)
+            p0: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx)
             p0.state.store(POOL_STATE_RUNNING)
             return p0
 
@@ -129,7 +127,7 @@ attach ThreadPool:
             Memory.free(deques_buf)
             Memory.free(threads_buf)
             Memory.free(envs_buf)
-            ps: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, steal_mtx=smtx)
+            ps: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx)
             ps.state.store(POOL_STATE_RUNNING)
             return ps
 
@@ -142,7 +140,7 @@ attach ThreadPool:
 
         # Build the pool struct. state := RUNNING is published before any
         # worker can observe the pool (workers are spawned just below).
-        pool: ThreadPool = ThreadPool(num_workers=n, deques=deques_buf, threads=threads_buf, envs=envs_buf, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, steal_mtx=smtx)
+        pool: ThreadPool = ThreadPool(num_workers=n, deques=deques_buf, threads=threads_buf, envs=envs_buf, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx)
         pool.state.store(POOL_STATE_RUNNING)
 
         # Spawn the worker threads. Each captures the (stable) pool
@@ -195,20 +193,19 @@ attach ThreadPool:
         return self.num_workers
 
     # ------------------------------------------------------------------
-    # steal_from — guarded steal of one work-item from worker deque
-    # `deque_idx`, serialized against concurrent push/steal via
-    # steal_mtx (mutex-assisted steal — see submit_chunk). Returns a
-    # handle (>= 0), DEQUE_EMPTY (-1), or DEQUE_ABORT (-2). The lock is
-    # held only for the O(1) deque op; the stolen item is executed by
-    # the caller AFTER unlocking, so bodies never run under the lock.
+    # steal_from — lock-free steal of one work-item from worker deque
+    # `deque_idx`. Returns a handle (>= 0), DEQUE_EMPTY (-1), or
+    # DEQUE_ABORT (-2, lost CAS race — caller treats as "try elsewhere").
+    # No lock: steal() only CAS-bumps `top`, never touches `bottom`.
     # ------------------------------------------------------------------
     fun steal_from(self, deque_idx: i32) -> i64:
         dq_addr: i64 = Memory.read_i64(self.deques + (deque_idx as i64) * 8)
         dq: Work_Stealing_Deque = dq_addr as Work_Stealing_Deque
-        self.steal_mtx.lock()
-        stolen: i64 = dq.steal()
-        self.steal_mtx.unlock()
-        return stolen
+        # Lock-free steal: steal() only CAS-bumps `top`; it never writes
+        # `bottom`. Safe against the lone bottom-writer (the submitter)
+        # and against other thieves (exactly one CAS wins — R4.3). No
+        # mutex needed.
+        return dq.steal()
 
     # ------------------------------------------------------------------
     # submit_chunk — OWNER-SIDE push of a work-item handle onto worker
@@ -221,18 +218,16 @@ attach ThreadPool:
             return
         dq_addr: i64 = Memory.read_i64(self.deques + (deque_idx as i64) * 8)
         dq: Work_Stealing_Deque = dq_addr as Work_Stealing_Deque
-        # Serialize deque mutation against concurrent steals (mutex-
-        # assisted, per design "SeqCst + mutex-assisted steal"). push()
-        # mutates `bottom` with a non-atomic load-then-store; a thief's
-        # steal() reads `bottom`/`top` and CAS-bumps `top`. Without this
-        # lock, a push interleaved with a steal across back-to-back
-        # submissions on the shared pool can lose a work-item, leaving
-        # `remaining` stuck above 0 and deadlocking parallel_for's wait
-        # loop (the intermittent hang Property 1 detected). The lock is
-        # held ONLY for the O(1) deque op, never while running a body.
-        self.steal_mtx.lock()
+        # Lock-free push. In parallel_for / spawn_task the SUBMITTER is a
+        # single thread (the caller distributes chunks round-robin), so
+        # each deque has exactly ONE bottom-writer. push() publishes the
+        # slot (Memory.write_i64) BEFORE the atomic `bottom.store`, and a
+        # thief's steal() only reads `bottom` (atomic) + CAS-bumps `top`.
+        # Single-owner bottom + atomic indices => the textbook Chase-Lev
+        # invariant holds with no lock. (The old intermittent hang came
+        # from a second bottom-writer via owner pop(); pop() is no longer
+        # used — every consumer steals — so the deque is single-owner.)
         dq.push(item)
-        self.steal_mtx.unlock()
 
     # ------------------------------------------------------------------
     # signal_work — publish that `count` new items are pending and wake
@@ -305,8 +300,6 @@ attach ThreadPool:
         # convention as the deques above).
         self.sleep_mtx.destroy()
         Memory.free(self.sleep_mtx as i64)
-        self.steal_mtx.destroy()
-        Memory.free(self.steal_mtx as i64)
 
 # ============================================================================
 # Free-standing pool helpers
