@@ -53,6 +53,13 @@ const POOL_STATE_SHUTDOWN: i32 = 2   # shutting down / shut down
 # Per-worker deque capacity (MUST be a power of two — see deque docs).
 const POOL_DEQUE_CAPACITY: i64 = 1024
 
+# Deep-park wait timeout (ms). A parked worker blocks on the wake event
+# for at most this long before re-checking its state on its own. The
+# event makes wakeups immediate in the common case; this timeout is only
+# a liveness safety net against a missed/raced wake, so it can be modest
+# without burning idle CPU.
+const PARK_WAIT_MS: i32 = 2
+
 # Work-item record `kind` discriminator (offset 0 of every record):
 const WORK_KIND_RANGE: i64 = 0   # parallel_for chunk: [lo,hi) over a body
 const WORK_KIND_TASK:  i64 = 1   # spawn_task: a single fire-and-forget work
@@ -77,6 +84,10 @@ struct ThreadPool:
     pending:     AtomicI64  # count of outstanding (un-drained) work items (R7.3)
     epoch:       AtomicI64  # bumped on submit/shutdown — the lost-wakeup guard
     sleep_mtx:   Mutex      # guards the park decision (re-check pending)
+    wake_event:  ParkEvent  # OS event: signaled on submit/shutdown to wake
+                            # parked workers immediately (no busy-spin). Backed
+                            # by the epoch counter so a missed/spurious wake is
+                            # always safe (parker re-checks epoch + timeout).
 
 attach ThreadPool:
     # ------------------------------------------------------------------
@@ -111,10 +122,11 @@ attach ThreadPool:
         pend: AtomicI64 = AtomicI64.new(0 as i64)
         ep:   AtomicI64 = AtomicI64.new(0 as i64)
         mtx:  Mutex     = Mutex.new()
+        wev:  ParkEvent = ParkEvent.new()
 
         # Serial mode: no workers requested. Build a valid empty pool.
         if n <= 0:
-            p0: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx)
+            p0: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev)
             p0.state.store(POOL_STATE_RUNNING)
             return p0
 
@@ -127,7 +139,7 @@ attach ThreadPool:
             Memory.free(deques_buf)
             Memory.free(threads_buf)
             Memory.free(envs_buf)
-            ps: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx)
+            ps: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev)
             ps.state.store(POOL_STATE_RUNNING)
             return ps
 
@@ -140,7 +152,7 @@ attach ThreadPool:
 
         # Build the pool struct. state := RUNNING is published before any
         # worker can observe the pool (workers are spawned just below).
-        pool: ThreadPool = ThreadPool(num_workers=n, deques=deques_buf, threads=threads_buf, envs=envs_buf, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx)
+        pool: ThreadPool = ThreadPool(num_workers=n, deques=deques_buf, threads=threads_buf, envs=envs_buf, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, wake_event=wev)
         pool.state.store(POOL_STATE_RUNNING)
 
         # Spawn the worker threads. Each captures the (stable) pool
@@ -240,6 +252,10 @@ attach ThreadPool:
     fun signal_work(self, count: i64):
         self.pending.fetch_add(count)
         self.epoch.fetch_add(1 as i64)
+        # Wake parked workers immediately via the OS event (no waiting on
+        # the backoff timeout). The event is published AFTER pending+epoch
+        # so any worker the wake reaches re-checks and finds the work.
+        self.wake_event.signal()
 
     # ------------------------------------------------------------------
     # shutdown — idempotent teardown (R5.5, R5.6, R5.8, R7.6).
@@ -260,6 +276,10 @@ attach ThreadPool:
         # Request exit and wake all parked workers so they observe it.
         self.shutdown.store(1)
         self.epoch.fetch_add(1 as i64)
+        # Wake every parked worker so it observes shutdown and exits its
+        # loop (so join() below can complete). Signaled after shutdown=1
+        # + epoch bump are published.
+        self.wake_event.signal()
         # Join every worker (R5.5): block until each exits, close handle.
         wi: i32 = 0
         while wi < self.num_workers:
@@ -300,6 +320,10 @@ attach ThreadPool:
         # convention as the deques above).
         self.sleep_mtx.destroy()
         Memory.free(self.sleep_mtx as i64)
+        # Release the OS wake event (handle + @heap struct). All workers
+        # are joined, so nothing will wait on or signal it again.
+        self.wake_event.destroy()
+        Memory.free(self.wake_event as i64)
 
 # ============================================================================
 # Free-standing pool helpers
@@ -472,17 +496,22 @@ fun _pool_execute_item(item: i64):
 # 1) Under sleep_mtx, record the current epoch and RE-CHECK pending /
 #    shutdown. If work appeared (or shutdown fired) before we recorded
 #    the epoch, we see it here and don't park.
-# 2) Otherwise back off in a bounded loop, waking as soon as the epoch
-#    changes (a submit bumped it), pending becomes positive, or shutdown
-#    is requested. Backoff escalates from yield to Sleep(1ms) so idle
-#    CPU stays low.
+# 2) Otherwise spin briefly (cheap wakeups for bursty submits), then
+#    park on the OS wake event with a bounded timeout. signal_work /
+#    shutdown SetEvent the wake event, so a parked worker resumes
+#    immediately instead of waiting out a Sleep(1) tick — low latency
+#    AND near-zero idle CPU (no continuous polling).
 #
-# Why no wakeup is lost: signal_work / shutdown push work and THEN bump
-# the epoch. A parker records seen_epoch under the lock and re-checks
-# pending under the same lock. If the submit happened before the record,
-# pending is already > 0 (seen). If after, the epoch differs from
-# seen_epoch (seen). There is no interleaving where the parker sleeps
-# forever past available work.
+# Why no wakeup is lost (event + epoch + timeout, belt-and-suspenders):
+#   signal_work / shutdown push work, bump the epoch, THEN SetEvent.
+#   * A parker records seen_epoch, then re-checks pending/shutdown under
+#     the lock: a submit that happened before the record is seen here.
+#   * Before sleeping it ResetEvent()s and re-checks epoch/pending: a
+#     submit between the check and the reset bumped the epoch (seen) or
+#     left the event set again (wait returns at once).
+#   * The manual-reset event wakes ALL parked workers on one SetEvent.
+#   * The wait carries a timeout, so even a reset that races away another
+#     worker's wake can only delay it by PARK_WAIT_MS, never forever.
 # ----------------------------------------------------------------------
 fun _pool_park(pool: ThreadPool):
     pool.sleep_mtx.lock()
@@ -491,17 +520,34 @@ fun _pool_park(pool: ThreadPool):
         pool.sleep_mtx.unlock()
         return
     pool.sleep_mtx.unlock()
+    # Short spin first: catches the common case where work lands within a
+    # few microseconds, avoiding an event syscall entirely.
     spins: i32 = 0
+    while spins < 64:
+        if pool.epoch.load() != seen_epoch:
+            return
+        if pool.pending.load() > 0 as i64:
+            return
+        if pool.shutdown.load() == 1:
+            return
+        Thread.yield_now()
+        spins = spins + 1
+    # Deep park on the OS event. Clear it, re-check (so a submit during
+    # the spin->park transition isn't missed), then block until a
+    # SetEvent or the timeout safety net.
     while pool.shutdown.load() == 0:
         if pool.epoch.load() != seen_epoch:
             return
         if pool.pending.load() > 0 as i64:
             return
-        if spins < 64:
-            Thread.yield_now()
-            spins = spins + 1
-        else:
-            Thread.sleep(1)
+        pool.wake_event.reset()
+        # Re-check AFTER reset: if a signaler set the event (or bumped the
+        # epoch) just before our reset, see it now rather than sleep past.
+        if pool.epoch.load() != seen_epoch:
+            return
+        if pool.pending.load() > 0 as i64:
+            return
+        pool.wake_event.wait(PARK_WAIT_MS)
 
 # ============================================================================
 # Global default pool — one ThreadPool per process (R5.1, R5.2, R10.1)

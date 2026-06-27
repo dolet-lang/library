@@ -46,3 +46,32 @@ attach Thread:
 
     static fun current_id() -> i32:
         return dsl_getpid()
+
+# ============================================================================
+# ParkEvent — Linux facade matching the Windows ParkEvent API so std/
+# thread_pool.dlt compiles identically across platforms. Real Linux
+# threading is a placeholder (Thread.spawn returns handle==0 -> the pool
+# runs in serial mode), so the pool never actually parks here. These
+# methods are therefore correct no-ops: wait() just sleeps out its
+# timeout, signal()/reset()/destroy() do nothing. A futex-backed
+# implementation lands alongside real clone/futex thread support.
+# ============================================================================
+@heap
+struct ParkEvent:
+    handle: i64
+
+attach ParkEvent:
+    static fun new() -> ParkEvent:
+        return ParkEvent(handle=0)
+
+    fun wait(self, ms: i32):
+        Thread.sleep(ms)
+
+    fun signal(self):
+        return
+
+    fun reset(self):
+        return
+
+    fun destroy(self):
+        return

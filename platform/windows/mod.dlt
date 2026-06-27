@@ -45,6 +45,9 @@ export DeleteCriticalSection
 export EnterCriticalSection
 export LeaveCriticalSection
 export TryEnterCriticalSection
+export CreateEventA
+export SetEvent
+export ResetEvent
 export GetSystemInfo
 export GetActiveProcessorCount
 export CpuInfo

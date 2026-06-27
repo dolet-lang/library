@@ -87,3 +87,48 @@ attach Thread:
     # ------------------------------------------------------------------
     static fun current_id() -> i32:
         return GetCurrentThreadId()
+
+# ============================================================================
+# ParkEvent — OS-level wake primitive for parking idle threads without
+# busy-spinning. Wraps a Win32 manual-reset event so a signaler can wake
+# EVERY parked waiter at once (the thread-pool wake-all pattern). Lives
+# in the platform layer so std/ never touches Win32 directly (R1.4).
+#
+# Manual-reset semantics: once SetEvent fires, the event stays signaled
+# (so no waiter can miss it) until reset() clears it. The thread pool
+# uses it as a "something changed, re-check your state" doorbell backed
+# by an epoch counter, NOT as a precise one-shot — so a spurious or
+# late wake is always safe (the waiter re-checks and re-parks).
+# ============================================================================
+@heap
+struct ParkEvent:
+    handle: i64
+
+attach ParkEvent:
+    # Create a manual-reset event, initially non-signaled.
+    static fun new() -> ParkEvent:
+        h: i64 = CreateEventA(0, 1, 0, 0)
+        return ParkEvent(handle=h)
+
+    # Block until signaled OR `ms` milliseconds elapse (whichever first).
+    # The timeout is a safety net: even if a wake is somehow missed, the
+    # waiter resumes within `ms` and re-checks its condition. Returns
+    # immediately if the event is already signaled.
+    fun wait(self, ms: i32):
+        if self.handle != 0:
+            WaitForSingleObject(self.handle, ms)
+
+    # Wake EVERY current waiter (manual-reset stays hot until reset()).
+    fun signal(self):
+        if self.handle != 0:
+            SetEvent(self.handle)
+
+    # Clear the signaled state so future waiters block again.
+    fun reset(self):
+        if self.handle != 0:
+            ResetEvent(self.handle)
+
+    # Release the OS event handle.
+    fun destroy(self):
+        if self.handle != 0:
+            CloseHandle(self.handle)

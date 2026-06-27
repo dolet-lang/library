@@ -69,6 +69,18 @@ extern lib "kernel32":
     fun LeaveCriticalSection(lpCriticalSection: i64)
     # Returns non-zero iff the lock was acquired without blocking.
     fun TryEnterCriticalSection(lpCriticalSection: i64) -> i32
+
+    # Event objects — std/thread_pool.dlt uses one to wake parked workers
+    # without busy-spinning (efficient park/wake). All in kernel32, so no
+    # extra import library is needed (unlike WaitOnAddress's Synchronization.lib).
+    #   CreateEventA(lpEventAttributes=NULL, bManualReset, bInitialState, lpName=NULL)
+    #     bManualReset != 0 -> stays signaled until ResetEvent (wakes ALL waiters).
+    #   WaitForSingleObject(handle, ms)  — INFINITE = 0xFFFFFFFF; returns 0 (WAIT_OBJECT_0)
+    #     when signaled, 0x102 (WAIT_TIMEOUT) on timeout.
+    fun CreateEventA(lpEventAttributes: i64, bManualReset: i32, bInitialState: i32, lpName: i64) -> i64
+    fun SetEvent(hEvent: i64) -> i32
+    fun ResetEvent(hEvent: i64) -> i32
+
     # CPU core-count APIs — std/thread_pool.dlt reads Core_Count from these.
     # GetSystemInfo fills a 48-byte SYSTEM_INFO struct on x64; caller
     # allocates the storage (Memory.malloc_zeroed(48)) and passes its address.
