@@ -1,0 +1,621 @@
+requires core/parallel_deque
+requires core/atomic
+requires platform/{platform}/cpu_info
+requires platform/{platform}/thread
+requires platform/{platform}/mutex
+# ============================================================================
+# ThreadPool — persistent work-stealing thread pool (std tier).
+#
+# This is the std-level orchestrator for dolet-parallel. It composes the
+# lower tiers behind a uniform interface (R1.3, R1.4):
+#   * core/parallel_deque  → Work_Stealing_Deque (the load-balancer)
+#   * core/atomic          → AtomicI32 / AtomicI64 (shared state, SeqCst)
+#   * platform/<os>/cpu_info → CpuInfo.cpu_count() (runtime Core_Count)
+#   * platform/<os>/thread → Thread.spawn / join (the OS thread primitive)
+#   * platform/<os>/mutex  → Mutex (guards the park decision)
+#
+# The pool creates a fixed set of Worker_Threads once and keeps them
+# alive across many submissions (R5.1, R5.2) — no per-task OS spawn.
+# Workers loop forever pulling work from their own deque (LIFO) and
+# stealing from others (FIFO) until shutdown is signalled, parking via
+# an epoch/backoff mechanism when there is nothing to do (R5.3, R5.4).
+#
+# ---------------------------------------------------------------------------
+# Serial mode (R2.4, R3.4, R3.5, R5.x graceful degradation)
+# ---------------------------------------------------------------------------
+# When cpu_count() <= 1, when an explicit worker count of 0 is asked
+# for, or when the environment cannot give us threads/memory, the pool
+# is built with num_workers == 0. That is a fully valid "serial-mode"
+# pool: no deques, no OS threads, no crash. parallel_for / spawn_task
+# (std/parallel.dlt) detect worker_count() == 0 and run the work inline
+# on the calling thread. Construction NEVER fails — the worst case is a
+# correct serial pool.
+#
+# ---------------------------------------------------------------------------
+# Concurrency correctness (see design "Concurrency-Correctness Design")
+# ---------------------------------------------------------------------------
+# Every shared field is either an Atomic* or guarded by sleep_mtx
+# (R7.1). The deques and threads arrays are written once during new(),
+# before any worker starts, and are read-only afterward. The lost-
+# wakeup hazard is closed with an epoch counter + a double-check of
+# `pending` under sleep_mtx inside _pool_park (see below).
+#
+# Memory ordering is SeqCst-only (the only ordering Dolet exposes
+# today). Conservative but correct; acquire/release tuning is future
+# work documented in the design.
+# ============================================================================
+
+# Lifecycle state machine for `state` (AtomicI32):
+const POOL_STATE_UNINIT:   i32 = 0   # never initialized
+const POOL_STATE_RUNNING:  i32 = 1   # workers alive, accepting work
+const POOL_STATE_SHUTDOWN: i32 = 2   # shutting down / shut down
+
+# Per-worker deque capacity (MUST be a power of two — see deque docs).
+const POOL_DEQUE_CAPACITY: i64 = 1024
+
+# Work-item record `kind` discriminator (offset 0 of every record):
+const WORK_KIND_RANGE: i64 = 0   # parallel_for chunk: [lo,hi) over a body
+const WORK_KIND_TASK:  i64 = 1   # spawn_task: a single fire-and-forget work
+
+# ============================================================================
+# ThreadPool struct
+#
+# `@heap struct` — the pool lives on the heap so its address (passed to
+# every worker as pool_addr) stays stable for the pool's whole life.
+# ============================================================================
+@heap
+struct ThreadPool:
+    num_workers: i32        # 0 == serial mode (Core_Count<=1 or no threads)
+    deques:      i64        # ptr to i64[num_workers], each a Work_Stealing_Deque addr
+    threads:     i64        # ptr to i64[num_workers], each a Thread handle
+    envs:        i64        # ptr to i64[num_workers], each a worker @heap closure env
+                            # (the body passed to Thread.spawn). Tracked so shutdown
+                            # can free these heap envs after joining — otherwise they
+                            # leak (one per worker). 0 in serial mode.
+    state:       AtomicI32  # POOL_STATE_* — guards init/shutdown idempotence
+    shutdown:    AtomicI32  # 1 once shutdown requested; workers exit their loop
+    pending:     AtomicI64  # count of outstanding (un-drained) work items (R7.3)
+    epoch:       AtomicI64  # bumped on submit/shutdown — the lost-wakeup guard
+    sleep_mtx:   Mutex      # guards the park decision (re-check pending)
+    steal_mtx:   Mutex      # serializes deque push/steal (mutex-assisted steal)
+
+attach ThreadPool:
+    # ------------------------------------------------------------------
+    # new — size the worker set from the runtime Core_Count (R2.1, R2.2).
+    #
+    # We create `max(0, cpu_count() - 1)` workers: the calling thread
+    # participates in draining work (see std/parallel.dlt), so the total
+    # number of executors equals cpu_count(). When cpu_count() <= 1 this
+    # yields 0 workers — a valid serial-mode pool (R2.4, R3.4).
+    # ------------------------------------------------------------------
+    static fun new() -> ThreadPool:
+        c: i32 = CpuInfo.cpu_count()
+        n: i32 = 0
+        if c > 1:
+            n = c - 1
+        return ThreadPool.new_with_workers(n)
+
+    # ------------------------------------------------------------------
+    # new_with_workers — build a pool with EXACTLY n workers (R2.3).
+    #
+    # n == 0 is valid and yields a serial-mode pool (no deques, no OS
+    # threads). On any allocation or spawn failure we degrade to serial
+    # mode (num_workers reflects only the workers that actually started)
+    # rather than crashing (Error Handling §).
+    # ------------------------------------------------------------------
+    static fun new_with_workers(n: i32) -> ThreadPool:
+        # Allocate the shared lifecycle state up front. These never fail
+        # in practice (small allocations); the pool struct itself is
+        # heap-allocated by the @heap struct machinery.
+        st:   AtomicI32 = AtomicI32.new(POOL_STATE_UNINIT)
+        sd:   AtomicI32 = AtomicI32.new(0)
+        pend: AtomicI64 = AtomicI64.new(0 as i64)
+        ep:   AtomicI64 = AtomicI64.new(0 as i64)
+        mtx:  Mutex     = Mutex.new()
+        smtx: Mutex     = Mutex.new()
+
+        # Serial mode: no workers requested. Build a valid empty pool.
+        if n <= 0:
+            p0: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, steal_mtx=smtx)
+            p0.state.store(POOL_STATE_RUNNING)
+            return p0
+
+        # Allocate the per-worker deque-pointer and thread-handle arrays
+        # (i64 each). If either allocation fails, fall back to serial.
+        deques_buf: i64 = Memory.malloc((n as i64) * 8) as i64
+        threads_buf: i64 = Memory.malloc((n as i64) * 8) as i64
+        envs_buf: i64 = Memory.malloc((n as i64) * 8) as i64
+        if deques_buf == 0 or threads_buf == 0 or envs_buf == 0:
+            Memory.free(deques_buf)
+            Memory.free(threads_buf)
+            Memory.free(envs_buf)
+            ps: ThreadPool = ThreadPool(num_workers=0, deques=0, threads=0, envs=0, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, steal_mtx=smtx)
+            ps.state.store(POOL_STATE_RUNNING)
+            return ps
+
+        # Create one Work_Stealing_Deque per worker and stash its address.
+        di: i32 = 0
+        while di < n:
+            dq: Work_Stealing_Deque = Work_Stealing_Deque.new(POOL_DEQUE_CAPACITY)
+            Memory.write_i64(deques_buf + (di as i64) * 8, dq as i64)
+            di = di + 1
+
+        # Build the pool struct. state := RUNNING is published before any
+        # worker can observe the pool (workers are spawned just below).
+        pool: ThreadPool = ThreadPool(num_workers=n, deques=deques_buf, threads=threads_buf, envs=envs_buf, state=st, shutdown=sd, pending=pend, epoch=ep, sleep_mtx=mtx, steal_mtx=smtx)
+        pool.state.store(POOL_STATE_RUNNING)
+
+        # Spawn the worker threads. Each captures the (stable) pool
+        # address and its own worker index, then runs the worker loop.
+        # CreateThread failures (handle == 0) are tolerated: we count
+        # only the workers that actually started. If none start we fall
+        # all the way back to serial mode.
+        #
+        # The worker body is a `@heap fun()` — a heap-allocated closure
+        # env. We stash its address in envs_buf so shutdown() can free it
+        # after the worker is joined (otherwise it leaks: one env per
+        # worker, never reclaimed by Thread/join).
+        pool_addr: i64 = pool as i64
+        started: i32 = 0
+        wi: i32 = 0
+        while wi < n:
+            idx: i32 = wi
+            body: @heap fun() = fun() _pool_worker_loop(pool_addr, idx)
+            Memory.write_i64(envs_buf + (wi as i64) * 8, body as i64)
+            t: Thread = Thread.spawn(body)
+            Memory.write_i64(threads_buf + (wi as i64) * 8, t.handle)
+            if t.handle != 0:
+                started = started + 1
+            wi = wi + 1
+
+        if started == 0:
+            # No OS thread could start — degrade to serial. Free the
+            # deques we allocated; keep arrays freed too. The pool stays
+            # valid with num_workers == 0.
+            _pool_free_deques(deques_buf, n)
+            Memory.free(deques_buf)
+            Memory.free(threads_buf)
+            _pool_free_envs(envs_buf, n)
+            Memory.free(envs_buf)
+            pool.num_workers = 0
+            pool.deques = 0
+            pool.threads = 0
+            pool.envs = 0
+            return pool
+
+        # Reflect the true number of live workers (R2.3 honored when all
+        # spawn; graceful partial-failure otherwise).
+        pool.num_workers = started
+        return pool
+
+    # ------------------------------------------------------------------
+    # worker_count — number of live Worker_Threads. 0 means serial mode.
+    # ------------------------------------------------------------------
+    fun worker_count(self) -> i32:
+        return self.num_workers
+
+    # ------------------------------------------------------------------
+    # steal_from — guarded steal of one work-item from worker deque
+    # `deque_idx`, serialized against concurrent push/steal via
+    # steal_mtx (mutex-assisted steal — see submit_chunk). Returns a
+    # handle (>= 0), DEQUE_EMPTY (-1), or DEQUE_ABORT (-2). The lock is
+    # held only for the O(1) deque op; the stolen item is executed by
+    # the caller AFTER unlocking, so bodies never run under the lock.
+    # ------------------------------------------------------------------
+    fun steal_from(self, deque_idx: i32) -> i64:
+        dq_addr: i64 = Memory.read_i64(self.deques + (deque_idx as i64) * 8)
+        dq: Work_Stealing_Deque = dq_addr as Work_Stealing_Deque
+        self.steal_mtx.lock()
+        stolen: i64 = dq.steal()
+        self.steal_mtx.unlock()
+        return stolen
+
+    # ------------------------------------------------------------------
+    # submit_chunk — OWNER-SIDE push of a work-item handle onto worker
+    # `deque_idx`'s deque. The handle is an address of a fully-populated
+    # work-item record (publish-after-init — see Concurrency §). Callers
+    # (std/parallel.dlt) follow every batch of submits with signal_work.
+    # ------------------------------------------------------------------
+    fun submit_chunk(self, deque_idx: i32, item: i64):
+        if self.num_workers == 0:
+            return
+        dq_addr: i64 = Memory.read_i64(self.deques + (deque_idx as i64) * 8)
+        dq: Work_Stealing_Deque = dq_addr as Work_Stealing_Deque
+        # Serialize deque mutation against concurrent steals (mutex-
+        # assisted, per design "SeqCst + mutex-assisted steal"). push()
+        # mutates `bottom` with a non-atomic load-then-store; a thief's
+        # steal() reads `bottom`/`top` and CAS-bumps `top`. Without this
+        # lock, a push interleaved with a steal across back-to-back
+        # submissions on the shared pool can lose a work-item, leaving
+        # `remaining` stuck above 0 and deadlocking parallel_for's wait
+        # loop (the intermittent hang Property 1 detected). The lock is
+        # held ONLY for the O(1) deque op, never while running a body.
+        self.steal_mtx.lock()
+        dq.push(item)
+        self.steal_mtx.unlock()
+
+    # ------------------------------------------------------------------
+    # signal_work — publish that `count` new items are pending and wake
+    # any parked workers by bumping the epoch (the lost-wakeup guard).
+    #
+    # ORDER MATTERS: the items must already be pushed onto the deques
+    # BEFORE this is called, so a worker woken by the epoch bump can
+    # actually find them.
+    # ------------------------------------------------------------------
+    fun signal_work(self, count: i64):
+        self.pending.fetch_add(count)
+        self.epoch.fetch_add(1 as i64)
+
+    # ------------------------------------------------------------------
+    # shutdown — idempotent teardown (R5.5, R5.6, R5.8, R7.6).
+    #
+    # CAS RUNNING(1) -> SHUTTING_DOWN(2): only the thread that wins the
+    # CAS performs the teardown; any concurrent or later call sees a
+    # non-RUNNING state and returns without error (idempotence).
+    #
+    # The winner: sets shutdown=1, bumps the epoch to wake every parked
+    # worker, joins every worker thread, then frees the per-worker
+    # deques and the two arrays. Serial-mode pools (num_workers==0) have
+    # nothing to join or free beyond the lifecycle atomics + mutex.
+    # ------------------------------------------------------------------
+    fun shutdown(self):
+        if not self.state.cas(POOL_STATE_RUNNING, POOL_STATE_SHUTDOWN):
+            # Already shutting down / shut down (or never ran) — no-op.
+            return
+        # Request exit and wake all parked workers so they observe it.
+        self.shutdown.store(1)
+        self.epoch.fetch_add(1 as i64)
+        # Join every worker (R5.5): block until each exits, close handle.
+        wi: i32 = 0
+        while wi < self.num_workers:
+            h: i64 = Memory.read_i64(self.threads + (wi as i64) * 8)
+            if h != 0:
+                t: Thread = Thread(handle=h)
+                t.join()
+            wi = wi + 1
+        # Free the deques, the worker-env closures, and the arrays
+        # without leaking (R5.6).
+        if self.num_workers > 0:
+            _pool_free_deques(self.deques, self.num_workers)
+            Memory.free(self.deques)
+            Memory.free(self.threads)
+            # Workers are all joined now, so no worker is still executing
+            # from its env — free each worker closure env, then the array.
+            _pool_free_envs(self.envs, self.num_workers)
+            Memory.free(self.envs)
+            self.deques = 0
+            self.threads = 0
+            self.envs = 0
+        self.num_workers = 0
+        # Release the lifecycle atomics + the park mutexes. All workers
+        # are joined (gone) by now, so no thread races these frees.
+        #
+        # `state` is DELIBERATELY kept alive: a second shutdown() call
+        # CAS-checks state and returns early (R5.8, R7.6). Freeing it
+        # would make that repeat call a use-after-free. The lone state
+        # AtomicI32 is a tiny, bounded, intentional exception so repeated
+        # shutdown stays memory-safe. (parallel_shutdown, which discards
+        # the pool entirely, frees `state` and the pool struct itself —
+        # see thread_pool.dlt's parallel_shutdown below.)
+        Memory.free(self.shutdown as i64)
+        Memory.free(self.pending as i64)
+        Memory.free(self.epoch as i64)
+        # Mutex.destroy() frees the 40-byte CRITICAL_SECTION buffer; the
+        # @heap Mutex struct itself is the caller's to reclaim (same
+        # convention as the deques above).
+        self.sleep_mtx.destroy()
+        Memory.free(self.sleep_mtx as i64)
+        self.steal_mtx.destroy()
+        Memory.free(self.steal_mtx as i64)
+
+# ============================================================================
+# Free-standing pool helpers
+#
+# These are module-level functions (not methods) because the worker
+# closure captures a raw `pool_addr: i64` and a `worker_index: i32`, and
+# recovers the typed pool with `pool_addr as ThreadPool`. Keeping them
+# free-standing keeps the thread-entry closure trivial. The `_pool_`
+# prefix marks them as internal helpers (user code must not call them).
+# ============================================================================
+
+# ----------------------------------------------------------------------
+# _pool_free_deques — destroy and free each Work_Stealing_Deque whose
+# address is stored in `deques_buf[0..count)`. Does NOT free deques_buf
+# itself (the caller does). Safe to call only after every worker that
+# could touch these deques has been joined.
+#
+# dq.destroy() frees the deque's INTERNAL allocations (ring buffer +
+# the top/bottom atomics) but — per the codebase convention that a
+# struct's destroy() reclaims sub-allocations while the owner reclaims
+# the struct — leaves the @heap deque struct itself alive. We own these
+# deques, so we free the struct pointer here too. Without this, every
+# pool teardown would leak one deque struct per worker.
+# ----------------------------------------------------------------------
+fun _pool_free_deques(deques_buf: i64, count: i32):
+    if deques_buf == 0:
+        return
+    i: i32 = 0
+    while i < count:
+        dq_addr: i64 = Memory.read_i64(deques_buf + (i as i64) * 8)
+        if dq_addr != 0:
+            dq: Work_Stealing_Deque = dq_addr as Work_Stealing_Deque
+            dq.destroy()
+            Memory.free(dq_addr)
+        i = i + 1
+
+# ----------------------------------------------------------------------
+# _pool_free_envs — free each worker closure env whose heap address is
+# stored in `envs_buf[0..count)`. Each is the `@heap fun()` body handed
+# to Thread.spawn; its env outlived the spawning frame so nothing else
+# reclaims it. Safe to call only after every worker has been joined (the
+# worker can no longer be executing from its own env). Does NOT free
+# envs_buf itself (the caller does).
+# ----------------------------------------------------------------------
+fun _pool_free_envs(envs_buf: i64, count: i32):
+    if envs_buf == 0:
+        return
+    i: i32 = 0
+    while i < count:
+        env_addr: i64 = Memory.read_i64(envs_buf + (i as i64) * 8)
+        if env_addr != 0:
+            Memory.free(env_addr)
+        i = i + 1
+
+# ----------------------------------------------------------------------
+# _pool_worker_loop — the body every Worker_Thread runs (R5.3, R7.3).
+#
+# Loop until shutdown is observed:
+#   * find work (own deque first, then steal from others),
+#   * execute it and decrement `pending` (drain accounting),
+#   * otherwise park until a submit bumps the epoch or shutdown fires.
+# ----------------------------------------------------------------------
+fun _pool_worker_loop(pool_addr: i64, worker_index: i32):
+    pool: ThreadPool = pool_addr as ThreadPool
+    while pool.shutdown.load() == 0:
+        item: i64 = _pool_find_work(pool, worker_index)
+        if item >= 0:
+            _pool_execute_item(item)
+            pool.pending.fetch_sub(1 as i64)
+        else:
+            _pool_park(pool)
+    # shutdown observed — worker returns, thread exits, join() unblocks.
+
+# ----------------------------------------------------------------------
+# _pool_find_work — pull one work-item handle for this worker (R4.1, R4.3).
+#
+# Sweep EVERY deque (this worker's own included) and try to STEAL (CAS on
+# the top end). DEQUE_ABORT (a lost CAS race) is NOT an error — we simply
+# move on to the next victim, which is exactly how "exactly one worker
+# acquires an item" stays true under contention.
+#
+# Why steal-only (no owner pop on the own deque):
+#   In dolet-parallel the SUBMITTER is the calling thread, not the worker
+#   that owns the deque — the caller `push`es chunks onto worker deques in
+#   parallel_for. push() and pop() both mutate `bottom` with a non-atomic
+#   load-then-store. If a worker called pop() on its own deque while the
+#   caller was pushing the NEXT batch onto that same deque, the two
+#   bottom writers would race and a work-item could be lost (its slot
+#   written but `bottom` never advanced) — leaving `remaining` stuck above
+#   0 and deadlocking parallel_for's wait loop (the intermittent hang seen
+#   under rapid back-to-back submissions).
+#
+#   The fix keeps `bottom` SINGLE-WRITER: only the caller's push() ever
+#   touches it. Every consumer (workers AND the participating caller) takes
+#   work through steal(), whose only mutation is a CAS on `top`. CAS on
+#   `top` is safe against the lone bottom-writer and against other thieves,
+#   so the exactly-once guarantee (R4.3) holds with no lost items. LIFO
+#   owner-pop locality is sacrificed for obvious correctness; restoring a
+#   true single-owner pop fast-path is documented future work.
+#
+# `worker_index` is retained for the round-robin starting offset so that
+# workers prefer different deques first, reducing CAS contention.
+#
+# Returns a work-item handle (>= 0) or DEQUE_EMPTY (-1) when nothing was
+# found anywhere this pass.
+# ----------------------------------------------------------------------
+fun _pool_find_work(pool: ThreadPool, worker_index: i32) -> i64:
+    n: i32 = pool.num_workers
+    if n == 0:
+        return DEQUE_EMPTY
+    # Sweep all deques, starting at our own index to spread contention.
+    k: i32 = 0
+    while k < n:
+        v: i32 = (worker_index + k) % n
+        stolen: i64 = pool.steal_from(v)
+        if stolen >= 0:
+            return stolen
+        # DEQUE_EMPTY (-1) or DEQUE_ABORT (-2): try the next deque.
+        k = k + 1
+    return DEQUE_EMPTY
+
+# ----------------------------------------------------------------------
+# _pool_execute_item — run one work-item record (R7.3, closure ABI R11).
+#
+# Reads `kind` at offset 0 and dispatches per the design's record
+# layout. The closure is invoked through its heap env pointer via the
+# cast-then-call ABI (env[0] holds fn_ptr; calling the cast value lowers
+# to fn_ptr(env_ptr, args...)) — identical to how __thread_entry calls
+# its closure, just with an extra arg for the RANGE body.
+#
+# This helper is intentionally SELF-CONTAINED (reads the records inline)
+# so the pool lifecycle does not depend on std/parallel.dlt, which adds
+# the submission side (tasks 5 & 6). The record layouts are fixed by the
+# design's Data Models section:
+#
+#   RANGE (40 bytes):  0:kind=0  8:body_ptr  16:lo  24:hi  32:remaining_ptr
+#   TASK  (24 bytes):  0:kind=1  8:work_ptr  16:done_ptr
+# ----------------------------------------------------------------------
+fun _pool_execute_item(item: i64):
+    kind: i64 = Memory.read_i64(item)
+    if kind == WORK_KIND_RANGE:
+        body_ptr: i64 = Memory.read_i64(item + 8)
+        lo: i64 = Memory.read_i64(item + 16)
+        hi: i64 = Memory.read_i64(item + 24)
+        remaining_ptr: i64 = Memory.read_i64(item + 32)
+        # Recover the @heap fun(i32) body and invoke it for each index.
+        body: @heap fun(i32) = body_ptr as @heap fun(i32)
+        i: i64 = lo
+        while i < hi:
+            body(i as i32)
+            i = i + 1
+        # Signal this chunk done on the parallel_for `remaining` counter.
+        if remaining_ptr != 0:
+            rem: AtomicI64 = remaining_ptr as AtomicI64
+            rem.fetch_sub(1 as i64)
+        return
+    # TASK: run the @heap fun() work once, then flag the TaskHandle done.
+    work_ptr: i64 = Memory.read_i64(item + 8)
+    done_ptr: i64 = Memory.read_i64(item + 16)
+    work: @heap fun() = work_ptr as @heap fun()
+    work()
+    if done_ptr != 0:
+        done: AtomicI32 = done_ptr as AtomicI32
+        done.store(1)
+
+# ----------------------------------------------------------------------
+# _pool_park — sleep a worker that found no work, without losing wakeups
+# (the most dangerous hazard — see design "Lost-wakeup hazard").
+#
+# 1) Under sleep_mtx, record the current epoch and RE-CHECK pending /
+#    shutdown. If work appeared (or shutdown fired) before we recorded
+#    the epoch, we see it here and don't park.
+# 2) Otherwise back off in a bounded loop, waking as soon as the epoch
+#    changes (a submit bumped it), pending becomes positive, or shutdown
+#    is requested. Backoff escalates from yield to Sleep(1ms) so idle
+#    CPU stays low.
+#
+# Why no wakeup is lost: signal_work / shutdown push work and THEN bump
+# the epoch. A parker records seen_epoch under the lock and re-checks
+# pending under the same lock. If the submit happened before the record,
+# pending is already > 0 (seen). If after, the epoch differs from
+# seen_epoch (seen). There is no interleaving where the parker sleeps
+# forever past available work.
+# ----------------------------------------------------------------------
+fun _pool_park(pool: ThreadPool):
+    pool.sleep_mtx.lock()
+    seen_epoch: i64 = pool.epoch.load()
+    if pool.pending.load() > 0 as i64 or pool.shutdown.load() == 1:
+        pool.sleep_mtx.unlock()
+        return
+    pool.sleep_mtx.unlock()
+    spins: i32 = 0
+    while pool.shutdown.load() == 0:
+        if pool.epoch.load() != seen_epoch:
+            return
+        if pool.pending.load() > 0 as i64:
+            return
+        if spins < 64:
+            Thread.yield_now()
+            spins = spins + 1
+        else:
+            Thread.sleep(1)
+
+# ============================================================================
+# Global default pool — one ThreadPool per process (R5.1, R5.2, R10.1)
+#
+# Both std/parallel.dlt (parallel_for / spawn_task) and the engine
+# wrapper share this single pool. We NEVER create a pool per call — the
+# whole point of a persistent pool is to amortize the worker-spawn cost
+# (R5.2). Initialization is LAZY (first-use), so a program that never
+# touches parallelism pays nothing.
+#
+# Init is guarded by a CAS on g_default_pool_state so exactly one thread
+# builds the pool. The winner constructs it and publishes the address in
+# g_default_pool_ptr; everyone else spins (yielding) until the address
+# becomes non-zero, then returns the same pool. This is the same
+# idempotent-init discipline the pool's own `state` field uses.
+# ============================================================================
+
+# Published pool address (0 == not yet created). Written once by the CAS
+# winner AFTER it finishes constructing the pool (publish-after-init).
+g_default_pool_ptr: i64 = 0
+
+# Init guard: 0 == UNINIT, 1 == one thread has taken responsibility for
+# constructing the pool. CAS 0 -> 1 elects the single constructor.
+g_default_pool_state: AtomicI32 = AtomicI32.new(0)
+
+# ----------------------------------------------------------------------
+# _default_pool — return the process-wide ThreadPool, creating it on
+# first use. Safe under concurrent first-use: the CAS winner builds the
+# pool, the losers wait for the published address.
+# ----------------------------------------------------------------------
+fun _default_pool() -> ThreadPool:
+    # Elect the single constructor via CAS UNINIT(0) -> 1.
+    if g_default_pool_state.cas(0, 1):
+        p: ThreadPool = ThreadPool.new()
+        g_default_pool_ptr = p as i64
+        return p
+    # Another thread is constructing (or has constructed) the pool.
+    # Spin until the address is published, then return the shared pool.
+    while g_default_pool_ptr == 0:
+        Thread.yield_now()
+    return g_default_pool_ptr as ThreadPool
+
+# ----------------------------------------------------------------------
+# parallel_shutdown — explicitly tear down the process-wide default pool
+# and reset the default-pool globals so a SUBSEQUENT parallel_for /
+# spawn_task builds a FRESH pool (R9.3, R1.3).
+#
+# Why this lives HERE (thread_pool.dlt) and not in parallel.dlt:
+#   it must touch the default-pool globals `g_default_pool_ptr` and
+#   `g_default_pool_state`, both defined in this file. Putting it next
+#   to the globals keeps that state private to one module.
+#
+# The default pool is normally optional to shut down — the OS reclaims
+# everything at process exit. This entry point exists for the leak test
+# (task 7.2 / Property 9): it runs MANY init->shutdown cycles and asserts
+# Memory.alloc_balance() is unchanged across them, which requires that a
+# cycle frees EVERYTHING it allocated.
+#
+# Sequence:
+#   1. Snapshot the published pool address. If 0, no pool was ever
+#      created — safe no-op (covers "never used parallelism" and
+#      "already shut down", giving idempotence / R5.8 at this layer too).
+#   2. Recover the typed pool and call p.shutdown(). That is idempotent
+#      and does the heavy lifting: signal + join all workers, then free
+#      the deques (struct + buffer + atomics), the worker-env closures,
+#      the threads/deques/envs arrays, the shutdown/pending/epoch
+#      atomics, and BOTH mutexes (cs buffer + struct). It deliberately
+#      KEEPS `state` alive so explicitly-managed pools stay safe under a
+#      repeat shutdown().
+#   3. Because we are discarding this pool ENTIRELY (resetting the
+#      globals below so a fresh pool is built next time), and because the
+#      default pool is reachable ONLY through these globals — every
+#      worker is joined and no other reference exists — it is now safe to
+#      free the two allocations shutdown() intentionally left behind:
+#        * p.state   — the kept-alive lifecycle AtomicI32, and
+#        * the @heap ThreadPool struct itself (g_default_pool_ptr IS that
+#          struct pointer: _default_pool set `g_default_pool_ptr = p as
+#          i64`, and the @heap struct ctor allocated it).
+#      We do this ONLY here, NEVER inside ThreadPool.shutdown(), so
+#      explicitly-managed pools keep their idempotent-shutdown guarantee.
+#   4. Reset the globals: g_default_pool_ptr = 0 and
+#      g_default_pool_state.store(0) (back to UNINIT) so the next
+#      _default_pool() CAS wins and rebuilds a brand-new pool.
+#
+# Net effect across an init->shutdown cycle: every byte the default pool
+# allocated is freed, so Memory.alloc_balance() returns to its pre-init
+# value (leak-free, fully joined — R5.5, R5.6, R9.3).
+#
+# Idempotent / safe to call when already shut down or never initialized:
+# step 1's 0-check short-circuits both.
+# ----------------------------------------------------------------------
+fun parallel_shutdown():
+    addr: i64 = g_default_pool_ptr
+    if addr == 0:
+        # No pool was ever created (or it was already torn down). The
+        # globals are already in (or returned to) the UNINIT state, so
+        # there is nothing to free — a safe no-op.
+        return
+    p: ThreadPool = addr as ThreadPool
+    # Frees workers/deques/envs/arrays/atomics/mutexes; keeps `state`
+    # and the pool struct (the two leftovers we free below).
+    p.shutdown()
+    # Safe ONLY in this "we're done with this pool forever" path: no
+    # worker survives and the globals (the sole references) are about to
+    # be cleared, so nothing can touch `state` or the struct again.
+    Memory.free(p.state as i64)
+    Memory.free(addr)
+    # Reset so the next parallel_for / spawn_task builds a fresh pool.
+    g_default_pool_ptr = 0
+    g_default_pool_state.store(0)

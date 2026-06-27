@@ -236,6 +236,13 @@ define i32 @dsl_waitpid(i32 %pid, i64 %status, i32 %options) nounwind {
   ret i32 %ret32
 }
 
+; SYS_getdents64 = 217  |  getdents64(fd, dirp, count) -> bytes read
+define i64 @dsl_getdents64(i32 %fd, i64 %buf, i64 %count) nounwind {
+  %fd64 = sext i32 %fd to i64
+  %ret = call i64 @dsl_syscall3(i64 217, i64 %fd64, i64 %buf, i64 %count)
+  ret i64 %ret
+}
+
 ; SYS_getpid = 39
 define i32 @dsl_getpid() nounwind {
   %ret = call i64 @dsl_syscall1(i64 39, i64 0)
@@ -354,6 +361,50 @@ define i32 @dsl_htons(i32 %val) nounwind {
 ; --- Intrinsics ---
 declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+
+; libc-compatible memory helpers. Clang may lower LLVM memset/memcpy
+; intrinsics to these symbols at object emission time even though this
+; platform intentionally links no libc.
+define ptr @memset(ptr %dst, i32 %value, i64 %len) nounwind {
+entry:
+  %byte = trunc i32 %value to i8
+  br label %loop
+
+loop:
+  %i = phi i64 [0, %entry], [%next, %body]
+  %done = icmp uge i64 %i, %len
+  br i1 %done, label %exit, label %body
+
+body:
+  %p = getelementptr i8, ptr %dst, i64 %i
+  store i8 %byte, ptr %p
+  %next = add i64 %i, 1
+  br label %loop
+
+exit:
+  ret ptr %dst
+}
+
+define ptr @memcpy(ptr %dst, ptr %src, i64 %len) nounwind {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i64 [0, %entry], [%next, %body]
+  %done = icmp uge i64 %i, %len
+  br i1 %done, label %exit, label %body
+
+body:
+  %sp = getelementptr i8, ptr %src, i64 %i
+  %dp = getelementptr i8, ptr %dst, i64 %i
+  %v = load i8, ptr %sp
+  store i8 %v, ptr %dp
+  %next = add i64 %i, 1
+  br label %loop
+
+exit:
+  ret ptr %dst
+}
 
 ; --- Entry point wrapper ---
 ; Linux ELF needs _start, not main. This calls Dolet's @main and exits.

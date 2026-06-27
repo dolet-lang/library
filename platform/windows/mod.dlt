@@ -8,7 +8,9 @@ load platform/windows/path
 load platform/windows/args
 load platform/windows/process
 load platform/windows/info
+load platform/windows/cpu_info
 load platform/windows/dir
+load platform/windows/time
 
 # Selective import mappings for this platform
 expose platform/windows/format as format
@@ -43,3 +45,6 @@ export DeleteCriticalSection
 export EnterCriticalSection
 export LeaveCriticalSection
 export TryEnterCriticalSection
+export GetSystemInfo
+export GetActiveProcessorCount
+export CpuInfo

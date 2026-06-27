@@ -22,6 +22,17 @@ module platform/mod as platform
 
 # System / OS-specific (now under platform/<os>/)
 module platform/windows/mod as sys.windows
+module platform/windows/kernel32 as sys.windows.kernel32
+module platform/windows/win32/types as sys.windows.win32.types
+module platform/windows/win32/constants as sys.windows.win32.constants
+module platform/windows/win32/user32 as sys.windows.win32.user32
+module platform/windows/win32/gdi32 as sys.windows.win32.gdi32
+module platform/windows/win32/xinput as sys.windows.win32.xinput
+module platform/windows/win32/winsock as sys.windows.win32.winsock
+module platform/windows/win32/vulkan_surface as sys.windows.win32.vulkan_surface
+module platform/linux/mod as sys.linux
+module platform/linux/x11 as sys.linux.x11
+module platform/linux/vulkan_surface as sys.linux.vulkan_surface
 
 # Networking — lives at std/net/ as a multi-file module (socket, http,
 # tcp, tls, websocket). User imports it as `import net`.

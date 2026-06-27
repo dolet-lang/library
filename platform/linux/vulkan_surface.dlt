@@ -1,0 +1,19 @@
+# ============================================================================
+# Vulkan Xlib Surface Bindings - Linux platform layer
+# ============================================================================
+
+VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR: i32 = 1000004000
+VK_SUCCESS: i32 = 0
+
+struct VkXlibSurfaceCreateInfoKHR:
+    sType: i32 = 1000004000
+    padding1: i32 = 0
+    pNext: i64 = 0
+    flags: i32 = 0
+    padding2: i32 = 0
+    display: i64 = 0
+    window: i64 = 0
+
+extern lib "vulkan":
+    fun vkCreateXlibSurfaceKHR(instance: i64, pCreateInfo: i64, pAllocator: i64, pSurface: i64) -> i32
+    fun vkDestroySurfaceKHR(instance: i64, surface: i64, pAllocator: i64) -> i32

@@ -1,0 +1,27 @@
+# cpu_info.dlt - Cpu_Info_Provider for Windows.
+#
+# Reports the number of logical CPU cores available at runtime so the
+# thread pool can size its worker set without the developer specifying
+# a thread count. The same struct (CpuInfo) is mirrored in
+# library/platform/<other_os>/cpu_info.dlt so the std layer can call
+# CpuInfo.cpu_count() without knowing which OS it is building for.
+
+struct CpuInfo:
+    # Returns the logical processor count at runtime. Always >= 1.
+    # Primary path: GetActiveProcessorCount(ALL_PROCESSOR_GROUPS).
+    # Fallback: GetSystemInfo.dwNumberOfProcessors (offset 32).
+    # On any failure / nonsensical value, returns 1 (serial mode).
+    static fun cpu_count() -> i32:
+        n: i32 = GetActiveProcessorCount(65535)   # ALL_PROCESSOR_GROUPS = 0xFFFF
+        if n >= 1:
+            return n
+        # Fallback: GetSystemInfo into a zeroed 48-byte SYSTEM_INFO buffer.
+        buf: i64 = Memory.malloc_zeroed(48)
+        if buf == 0:
+            return 1
+        GetSystemInfo(buf)
+        cores: i32 = Memory.read_i32(buf + 32)    # dwNumberOfProcessors @ offset 32
+        Memory.free(buf)
+        if cores < 1:
+            return 1
+        return cores

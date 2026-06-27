@@ -5,6 +5,8 @@ load core/arena
 load core/str
 load core/string
 load core/atomic
+# parallel_deque depends on AtomicI64 (and Memory) — load after atomic.
+load core/parallel_deque
 # secure first — random.dlt declares `static secure: Secure = Secure()`
 # which needs `struct Secure` already in scope.
 load core/random/secure
@@ -19,6 +21,7 @@ export Str
 export str_join
 export AtomicI32
 export AtomicI64
+export Work_Stealing_Deque
 export Random
 export Secure
 export range

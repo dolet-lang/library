@@ -1,0 +1,315 @@
+requires std/thread_pool
+requires core/parallel_deque
+requires core/atomic
+requires platform/{platform}/thread
+# ============================================================================
+# parallel.dlt — the public data-parallel API (std tier).
+#
+# This file is the developer-facing surface of dolet-parallel. It sits
+# on top of the process-wide ThreadPool (std/thread_pool.dlt) and turns
+# a one-line `parallel_for(count, body)` into balanced, work-stealing
+# execution across the runtime Core_Count — with an identical serial
+# result on single-core / no-thread targets (R3, R7.2).
+#
+# Design references:
+#   * "Components and Interfaces #5 parallel_for"
+#   * "Serial Fallback (R2.4, R3.4, R3.5)"
+#   * "Data Models — Work-item record" (RANGE = 40 bytes)
+#   * "Closure / Thread ABI (R11)"
+#
+# Concurrency model (why this is correct):
+#   * The range [0,count) is partitioned into DISJOINT, gap-free chunks.
+#     Each chunk becomes one RANGE work-item, so every index is owned by
+#     exactly one chunk (R3.1, R7.3).
+#   * Chunks are distributed round-robin across the worker deques and a
+#     `remaining` AtomicI64 counts un-finished chunks.
+#   * The CALLING thread does NOT sit idle: it steals + runs chunks too
+#     (caller participation), which guarantees forward progress even if
+#     the workers are all busy, and is what makes a 0-worker pool fall
+#     through to a plain serial loop with no special-casing in the hot
+#     path (R7.7).
+#   * `_pool_execute_item` (thread_pool.dlt) already does the per-chunk
+#     `remaining.fetch_sub(1)`, so the caller must NOT decrement it again
+#     — it only decrements `pending` to keep the pool's drain accounting
+#     balanced (every executed item, by a worker or the caller, lowers
+#     `pending` by exactly one; total decrements == num_chunks, so
+#     `pending` returns to its pre-submit value).
+# ============================================================================
+
+# ----------------------------------------------------------------------
+# parallel_for — run `body(i)` for every i in [0, count), in parallel,
+# and block until all invocations have completed (R3.1, R3.2).
+#
+# `body` MUST be a `@heap fun(i32)` (R11.1): its env crosses the thread
+# boundary into the workers, so it has to outlive the calling frame.
+#
+# Serial fallbacks (R3.3, R3.4, R3.5):
+#   * count <= 0           → return immediately, body never invoked.
+#   * worker_count() == 0  → plain loop on the calling thread; the
+#                            observable result is identical to the
+#                            parallel path for any Pure_Mapping (R3.6).
+# ----------------------------------------------------------------------
+fun parallel_for(count: i32, body: @heap fun(i32)):
+    # R3.3 — empty / negative range does nothing.
+    if count <= 0:
+        return
+
+    pool: ThreadPool = _default_pool()
+    workers: i32 = pool.worker_count()
+
+    # R3.4 / R3.5 — serial mode (single core or no OS threads). A plain
+    # in-order loop on the calling thread, byte-for-byte the same result
+    # as the parallel path (R3.6).
+    if workers == 0:
+        _parallel_for_serial(count, body)
+        return
+
+    # ------------------------------------------------------------------
+    # Partition [0,count) into chunks. Oversubscribe relative to the
+    # executor count (workers + the participating caller) so that uneven
+    # per-index cost is smoothed out by stealing (R4.4). Never create
+    # more chunks than indices (no empty chunks), always at least one.
+    # ------------------------------------------------------------------
+    num_chunks: i32 = (workers + 1) * 4
+    if num_chunks > count:
+        num_chunks = count
+    if num_chunks < 1:
+        num_chunks = 1
+
+    # Submission arena: one 40-byte RANGE record per chunk. If the
+    # allocation fails, degrade to serial rather than crash (Error
+    # Handling §) — the result is still correct, just not parallel.
+    arena: i64 = Memory.malloc((num_chunks as i64) * 40) as i64
+    if arena == 0:
+        _parallel_for_serial(count, body)
+        return
+
+    # `remaining` counts chunks not yet finished. Workers and the caller
+    # each fetch_sub(1) as they complete a chunk (the fetch_sub lives in
+    # _pool_execute_item, RANGE branch).
+    remaining: AtomicI64 = AtomicI64.new(num_chunks as i64)
+    body_ptr: i64 = body as i64
+    rem_ptr: i64 = remaining as i64
+
+    # Even split with the first `rem` chunks carrying one extra index.
+    base: i32 = count / num_chunks
+    extra: i32 = count - base * num_chunks
+
+    lo: i32 = 0
+    ci: i32 = 0
+    while ci < num_chunks:
+        csize: i32 = base
+        if ci < extra:
+            csize = base + 1
+        hi: i32 = lo + csize
+
+        # Populate the RANGE record FULLY before publishing its handle
+        # onto a deque (publish-after-init — see Concurrency §).
+        #   0:kind=RANGE  8:body_ptr  16:lo  24:hi  32:remaining_ptr
+        rec: i64 = arena + (ci as i64) * 40
+        Memory.write_i64(rec + 0, WORK_KIND_RANGE)
+        Memory.write_i64(rec + 8, body_ptr)
+        Memory.write_i64(rec + 16, lo as i64)
+        Memory.write_i64(rec + 24, hi as i64)
+        Memory.write_i64(rec + 32, rem_ptr)
+
+        # Round-robin the chunk onto a worker's deque.
+        deque_idx: i32 = ci % workers
+        pool.submit_chunk(deque_idx, rec)
+
+        lo = hi
+        ci = ci + 1
+
+    # Publish the work count and wake any parked workers.
+    pool.signal_work(num_chunks as i64)
+
+    # Caller participates in draining instead of idling (R7.7).
+    _pool_caller_drain(pool, remaining)
+
+    # Belt-and-suspenders: the drain loop already waits for remaining==0,
+    # but spin once more in case a worker held the very last chunk.
+    while remaining.load() > 0 as i64:
+        Thread.yield_now()
+
+    # All chunks done; nothing will touch `remaining` or the arena again.
+    # AtomicI64 has no destroy(); its storage address IS the pointer, so
+    # free it directly. Then release the submission arena (no leaks).
+    Memory.free(remaining as i64)
+    Memory.free(arena)
+
+# ----------------------------------------------------------------------
+# _parallel_for_serial — Serial_Fallback body (R3.4, R3.5). A plain
+# in-order loop on the calling thread. Factored out so both the no-
+# worker pool and the malloc-failure degrade paths share one code path,
+# guaranteeing identical observable behavior (R3.6).
+# ----------------------------------------------------------------------
+fun _parallel_for_serial(count: i32, body: @heap fun(i32)):
+    i: i32 = 0
+    while i < count:
+        body(i)
+        i = i + 1
+
+# ----------------------------------------------------------------------
+# _pool_caller_drain — the calling thread helps execute chunks until the
+# parallel_for it is waiting on has no chunks left (R7.7 forward
+# progress). The caller owns no deque, so it can only STEAL from the
+# worker deques (FIFO top end).
+#
+# IMPORTANT accounting: _pool_execute_item already does the per-chunk
+# `remaining.fetch_sub(1)` for RANGE items, so we must NOT decrement
+# `remaining` here. We DO decrement `pending` ourselves, because we are
+# bypassing the worker loop (which is where workers do their own
+# `pending.fetch_sub(1)`); without this the pool's pending count would
+# never return to its pre-submit value.
+# ----------------------------------------------------------------------
+fun _pool_caller_drain(pool: ThreadPool, remaining: AtomicI64):
+    while remaining.load() > 0 as i64:
+        item: i64 = _pool_caller_steal_one(pool)
+        if item >= 0:
+            _pool_execute_item(item)
+            pool.pending.fetch_sub(1 as i64)
+        else:
+            # Nothing stealable this instant — yield and re-check. The
+            # workers are draining the rest; remaining will hit 0.
+            Thread.yield_now()
+
+# ----------------------------------------------------------------------
+# _pool_caller_steal_one — sweep every worker deque once and return the
+# first successfully stolen work-item handle, or DEQUE_EMPTY when none
+# yielded an item this pass. DEQUE_ABORT (lost CAS race) is treated like
+# empty: just move to the next victim, preserving "exactly one acquires"
+# (R4.3).
+# ----------------------------------------------------------------------
+fun _pool_caller_steal_one(pool: ThreadPool) -> i64:
+    n: i32 = pool.num_workers
+    v: i32 = 0
+    while v < n:
+        stolen: i64 = pool.steal_from(v)
+        if stolen >= 0:
+            return stolen
+        v = v + 1
+    return DEQUE_EMPTY
+
+# ----------------------------------------------------------------------
+# _default_pool_try_run_one — caller-side single-step drain helper used by
+# TaskHandle.wait (R7.7). Grabs the process-wide default pool, tries to
+# STEAL one pending work-item from any worker deque, and if it got one,
+# executes it and keeps the pool's drain accounting balanced.
+#
+# Accounting mirrors _pool_caller_drain EXACTLY: _pool_execute_item does
+# the per-item completion bookkeeping (RANGE remaining.fetch_sub / TASK
+# done.store), so here we only decrement `pending` — the same thing a
+# worker loop does after running an item. Without that, the pool's
+# pending count would never return to its pre-submit value.
+#
+# Returns 1 if an item was executed this call, 0 if nothing was stealable
+# (the caller should then yield and re-check).
+# ----------------------------------------------------------------------
+fun _default_pool_try_run_one() -> i32:
+    pool: ThreadPool = _default_pool()
+    item: i64 = _pool_caller_steal_one(pool)
+    if item >= 0:
+        _pool_execute_item(item)
+        pool.pending.fetch_sub(1 as i64)
+        return 1
+    return 0
+
+# ----------------------------------------------------------------------
+# TaskHandle — the join handle returned by spawn_task (R6.1, R6.3, R6.4).
+#
+# Fields:
+#   * done: AtomicI32 — 0 = pending, 1 = completed. `@heap` atomic, so the
+#     struct only carries the (stable) pointer; the worker that runs the
+#     task flips it to 1 via `done.store(1)` in _pool_execute_item.
+#   * rec: i64 — address of the 24-byte TASK work-item record that
+#     spawn_task allocated for the parallel path, or 0 in the serial
+#     fallback (no record was allocated). The waiter OWNS this record's
+#     cleanup: spawn_task returns BEFORE the task runs, so it cannot free
+#     the record (the worker still reads it asynchronously). wait() frees
+#     it once done==1 is observed. This keeps spawn_task leak-free WHENEVER
+#     wait() is called — the documented contract (matching R6.3/R6.4
+#     usage). If the caller never wait()s, the record leaks; that is the
+#     stated ownership rule.
+#
+# The design's "#6 TaskHandle" sketch shows only a `done` field; `rec` is
+# a minimal, deliberate extension purely so the waiter can reclaim the
+# task record with no compiler/runtime changes. TaskHandle itself stays
+# small and stack-allocated.
+# ----------------------------------------------------------------------
+struct TaskHandle:
+    done: AtomicI32        # 0 = pending, 1 = completed
+    rec:  i64              # TASK record addr to free on wait (0 = serial path)
+
+attach TaskHandle:
+    # ------------------------------------------------------------------
+    # wait — block until the task's executor sets done==1 (R6.3). If the
+    # task already completed before wait was called, the loop body never
+    # runs and wait returns immediately (R6.4).
+    #
+    # While waiting, the caller HELPS DRAIN the default pool (steal+run
+    # one pending item) instead of idling, so a 1-worker (or fully busy)
+    # pool can't deadlock on a task whose execution depends on the only
+    # worker also being free (R7.7). When nothing is stealable, yield.
+    #
+    # Once done==1 is observed, reclaim the TASK record we own (parallel
+    # path only; rec==0 in the serial fallback).
+    # ------------------------------------------------------------------
+    fun wait(self):
+        while self.done.load() == 0:
+            if _default_pool_try_run_one() == 0:
+                Thread.yield_now()
+        if self.rec != 0:
+            Memory.free(self.rec)
+
+# ----------------------------------------------------------------------
+# spawn_task — schedule `work` to run once on the pool and return a
+# TaskHandle to wait on (R6.1, R6.2). `work` MUST be a `@heap fun()`
+# (R11.2): its env crosses into a worker thread, so it has to outlive
+# the calling frame.
+#
+# Serial fallback (R6.5): when the pool has no workers (single core or no
+# OS threads), run `work()` inline on the calling thread, flag done=1,
+# and return a handle whose wait() returns immediately. rec=0 — no record
+# was allocated, so nothing to free.
+#
+# Parallel path (R6.1): allocate a 24-byte TASK work-item record, populate
+# it FULLY before publishing (publish-after-init — R11.3), push it onto a
+# worker deque, then signal_work so a parked worker wakes and finds it.
+# The record layout matches _pool_execute_item's TASK branch exactly:
+#   0:kind=WORK_KIND_TASK   8:work_ptr (@heap env)   16:done_ptr (AtomicI32)
+#
+# Ownership: spawn_task does NOT free the record (the worker reads it
+# asynchronously after this returns). The record address is stashed in
+# the handle so wait() can free it after the task completes.
+# ----------------------------------------------------------------------
+fun spawn_task(work: @heap fun()) -> TaskHandle:
+    done: AtomicI32 = AtomicI32.new(0)
+    pool: ThreadPool = _default_pool()
+
+    # R6.5 — serial mode: run inline, mark done, no record to track.
+    if pool.worker_count() == 0:
+        work()
+        done.store(1)
+        return TaskHandle(done=done, rec=0)
+
+    # Parallel path. Allocate the 24-byte TASK record. On malloc failure,
+    # degrade to running inline (still correct, just not parallel) so we
+    # never publish a null handle.
+    rec: i64 = Memory.malloc(24) as i64
+    if rec == 0:
+        work()
+        done.store(1)
+        return TaskHandle(done=done, rec=0)
+
+    # Populate the record FULLY before publishing its handle (publish-
+    # after-init). Layout fixed by _pool_execute_item's TASK branch.
+    Memory.write_i64(rec + 0, WORK_KIND_TASK)
+    Memory.write_i64(rec + 8, work as i64)
+    Memory.write_i64(rec + 16, done as i64)
+
+    # A single task: deque 0 is fine. Push then signal so a parked worker
+    # wakes and finds it (ORDER MATTERS — push before signal_work).
+    pool.submit_chunk(0, rec)
+    pool.signal_work(1 as i64)
+
+    return TaskHandle(done=done, rec=rec)

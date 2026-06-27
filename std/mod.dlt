@@ -6,8 +6,11 @@ load core/result
 load std/file
 load std/system
 load std/panic
-load std/thread
-load std/mutex
+load std/time
+load platform/{platform}/thread
+load platform/{platform}/mutex
+load std/thread_pool
+load std/parallel
 
 # Selective import mapping — platform-neutral
 expose std/io as io
@@ -28,6 +31,7 @@ export Command
 export Argv
 export System
 export Dir
+export Time
 export dolet_panic
 export List
 export Array
@@ -45,3 +49,8 @@ export flush
 export File
 export Thread
 export Mutex
+export ThreadPool
+export parallel_for
+export spawn_task
+export TaskHandle
+export parallel_shutdown

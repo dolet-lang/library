@@ -1,0 +1,35 @@
+# ============================
+#  Winsock2 Extern Bindings
+# ============================
+# Low-level Winsock2 API for Windows networking
+# ws2_32.dll provides the BSD socket API on Windows
+
+extern lib "ws2_32":
+    # ----- Initialization -----
+    fun WSAStartup(wVersionRequired: i32, lpWSAData: i64) -> i32
+    fun WSACleanup() -> i32
+    fun WSAGetLastError() -> i32
+
+    # ----- Socket Creation -----
+    # AF_INET=2, SOCK_STREAM=1, IPPROTO_TCP=6
+    fun socket(af: i32, sock_type: i32, protocol: i32) -> i64
+
+    # ----- Socket Options -----
+    # SOL_SOCKET=0xFFFF, SO_REUSEADDR=0x0004
+    fun setsockopt(s: i64, level: i32, optname: i32, optval: i64, optlen: i32) -> i32
+
+    # ----- Binding & Listening -----
+    fun bind(s: i64, addr: i64, namelen: i32) -> i32
+    fun listen(s: i64, backlog: i32) -> i32
+    fun accept(s: i64, addr: i64, addrlen: i64) -> i64
+
+    # ----- Data Transfer -----
+    fun recv(s: i64, buf: i64, len: i32, flags: i32) -> i32
+    fun send(s: i64, buf: i64, len: i32, flags: i32) -> i32
+
+    # ----- Cleanup -----
+    fun closesocket(s: i64) -> i32
+
+    # ----- Address Helpers -----
+    fun htons(hostshort: i32) -> i16
+    fun inet_addr(cp: str) -> i32

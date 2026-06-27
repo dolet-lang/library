@@ -1,0 +1,109 @@
+requires platform/windows/kernel32
+# ============================================================================
+# Mutex — exclusive lock for shared mutable state.
+#
+# Built on Win32 CRITICAL_SECTION (Linux: pthread_mutex, future). The OS
+# stores 40 bytes of internal state in a buffer that MUST stay at a
+# stable address — `@heap struct Mutex` ensures the storage pointer
+# never moves once `Mutex.new()` returns.
+#
+# Two ways to use:
+#
+#   # 1. Manual — you control the lock window.
+#   m: Mutex = Mutex.new()
+#   m.lock()
+#   shared_data = shared_data + 1
+#   m.unlock()
+#   # ... when truly done with the mutex:
+#   m.destroy()
+#
+#   # 2. Closure form — can't forget to unlock; the .with shim handles
+#   # acquire and release for you. Slightly higher per-call overhead
+#   # (~5 ns) but exception-safe (when exceptions ship) and harder to
+#   # misuse.
+#   m.with(fun():
+#       shared_data = shared_data + 1
+#   )
+#
+# Both forms use the same underlying CRITICAL_SECTION — they're
+# interchangeable in correctness, just different ergonomic surfaces.
+#
+# Performance: CRITICAL_SECTION is a "fast" lock — uncontended acquire
+# is a single CMPXCHG (~10 ns). Falls back to a kernel wait only when
+# another thread already holds it. Way cheaper than std::mutex on
+# linux which always involves a futex syscall.
+#
+# IMPORTANT: not re-entrant in the strict sense. The same thread CAN
+# re-enter a CRITICAL_SECTION it already holds (Win32 reference-counts
+# the owner), but that's a Windows quirk — relying on it makes code
+# non-portable. Treat as non-reentrant.
+# ============================================================================
+
+# CRITICAL_SECTION on x64 is 40 bytes. Allocating exactly that.
+CRITICAL_SECTION_SIZE: i64 = 40
+
+# `@heap struct` — every Mutex instance lives on the heap. The user
+# writes `: Mutex` everywhere; the constructor allocates automatically.
+@heap
+struct Mutex:
+    # Pointer to the CRITICAL_SECTION storage. The Mutex struct itself
+    # only needs this one field.
+    cs: i64
+
+attach Mutex:
+    # ------------------------------------------------------------------
+    # new — allocate + initialize the OS lock state.
+    # Always pair with destroy() before the Mutex is dropped, otherwise
+    # leaks 40 bytes per Mutex (no GC).
+    # ------------------------------------------------------------------
+    static fun new() -> Mutex:
+        # Allocate 40 bytes for the OS lock storage.
+        cs_addr: i64 = Memory.malloc(CRITICAL_SECTION_SIZE)
+        # Zero it (defensive — InitializeCriticalSection should overwrite
+        # all 40 bytes, but heap garbage upsets some Win32 internals).
+        Memory.zero(cs_addr, CRITICAL_SECTION_SIZE)
+        InitializeCriticalSection(cs_addr)
+        return Mutex(cs=cs_addr)
+
+    # ------------------------------------------------------------------
+    # lock — block until the calling thread acquires this Mutex.
+    # If another thread holds it, the OS puts this thread to sleep
+    # until the holder calls unlock().
+    # ------------------------------------------------------------------
+    fun lock(self):
+        EnterCriticalSection(self.cs)
+
+    # ------------------------------------------------------------------
+    # unlock — release the lock. UB to call from a thread that doesn't
+    # currently hold the Mutex.
+    # ------------------------------------------------------------------
+    fun unlock(self):
+        LeaveCriticalSection(self.cs)
+
+    # ------------------------------------------------------------------
+    # try_lock — non-blocking acquire. Returns true iff the lock was
+    # acquired. If true, you MUST call unlock(). If false, the Mutex
+    # is held by another thread; do NOT call unlock().
+    # ------------------------------------------------------------------
+    fun try_lock(self) -> bool:
+        return TryEnterCriticalSection(self.cs) != 0
+
+    # ------------------------------------------------------------------
+    # with — closure-based locking. Acquires, runs body(), releases.
+    # Equivalent to: lock(); body(); unlock(). The closure form is
+    # safer (impossible to forget unlock) at the cost of one indirect
+    # call per critical section.
+    # ------------------------------------------------------------------
+    fun with(self, body: @heap fun()):
+        EnterCriticalSection(self.cs)
+        body()
+        LeaveCriticalSection(self.cs)
+
+    # ------------------------------------------------------------------
+    # destroy — release the OS lock state and free the 40-byte buffer.
+    # Required to avoid a per-Mutex leak. Call exactly once, after no
+    # more threads will lock/unlock this Mutex.
+    # ------------------------------------------------------------------
+    fun destroy(self):
+        DeleteCriticalSection(self.cs)
+        Memory.free(self.cs)

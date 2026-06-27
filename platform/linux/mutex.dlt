@@ -1,0 +1,36 @@
+# ============================================================================
+# Mutex - Linux spinlock fallback.
+#
+# This is intentionally small and syscall-free. It gives Linux builds a real
+# mutual exclusion primitive for short critical sections while futex-backed
+# blocking mutexes are still pending.
+# ============================================================================
+
+@heap
+struct Mutex:
+    state: i32
+
+attach Mutex:
+    static fun new() -> Mutex:
+        return Mutex(state=0)
+
+    fun lock(self):
+        acquired: bool = false
+        while acquired == false:
+            acquired = __atomic_cas_i32(self as i64, 0, 1)
+            if acquired == false:
+                Thread.yield_now()
+
+    fun unlock(self):
+        __atomic_store_i32(self as i64, 0)
+
+    fun try_lock(self) -> bool:
+        return __atomic_cas_i32(self as i64, 0, 1)
+
+    fun with(self, body: @heap fun()):
+        self.lock()
+        body()
+        self.unlock()
+
+    fun destroy(self):
+        return

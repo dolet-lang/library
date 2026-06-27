@@ -1,0 +1,5 @@
+# info.dlt - Platform identification facade for Linux.
+
+struct PlatformInfo:
+    static fun name() -> str:
+        return "linux"

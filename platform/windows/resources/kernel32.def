@@ -44,6 +44,7 @@ EXPORTS
     SetEnvironmentVariableA
     GetCommandLineA
     GetSystemInfo
+    GetActiveProcessorCount
     GlobalMemoryStatusEx
     CreateProcessA
     WaitForSingleObject

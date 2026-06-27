@@ -1,0 +1,89 @@
+requires platform/windows/kernel32
+# ============================================================================
+# Thread — OS-managed thread spawn / join / sleep / yield.
+#
+# Built directly on Win32 CreateThread / WaitForSingleObject. The closure
+# value carries its own environment, so we pass it as the LPVOID `arg`
+# to CreateThread; the shim `__thread_entry` recovers the closure and
+# invokes it via Dolet's normal indirect-call path.
+#
+# Intentionally low-level: this is the OS primitive (level 1). Thread
+# pools, job systems, and channels are built on top in separate library
+# modules — same layering as Rust std::thread vs std::sync::mpsc, or
+# C++ std::thread vs higher-level frameworks.
+#
+# Performance notes:
+#   - Default stack 1 MiB per thread (Win32 default). Adjust later via
+#     spawn_with_stack(...).
+#   - Spawn cost ~50 µs typical (kernel-bound; not Dolet's overhead).
+#   - For fine-grained tasks, build a thread pool on top — don't spawn
+#     a fresh OS thread per item.
+# ============================================================================
+
+# ============================================================================
+# Win32 thread shim. CreateThread invokes this with the closure env_ptr
+# in `env`. The closure ABI is "env[0] holds fn_ptr; call fn_ptr(env_ptr)";
+# casting `env` to `@heap fun()` lets gen_indirect_call do that lowering
+# for free, so we don't have to hand-roll a function-pointer call here.
+#
+# Always returns 0 — the closure's own return value (when we add
+# Thread<T>) gets stashed in a heap slot before this shim returns, so
+# the kernel exit code stays meaningless.
+# ============================================================================
+fun __thread_entry(env: i64) -> i32:
+    __closure: @heap fun() = env as @heap fun()
+    __closure()
+    return 0
+
+# ============================================================================
+# Thread handle. Treat as opaque — only spawn/join/etc. operate on it.
+# ============================================================================
+struct Thread:
+    handle: i64
+
+attach Thread:
+    # ------------------------------------------------------------------
+    # spawn(f) — start a new OS thread that immediately runs f.
+    # The closure must be `@heap`: its env outlives the spawning fn,
+    # so a stack env would dangle the moment spawn returns.
+    # ------------------------------------------------------------------
+    static fun spawn(f: @heap fun()) -> Thread:
+        # Closure value IS the env pointer. Pass it verbatim as LPVOID.
+        env_ptr: i64 = f as i64
+        # Bare function name resolves to its addressof (gen_var_load
+        # handles this — emits ptrtoint to i64 automatically).
+        entry_addr: i64 = __thread_entry as i64
+        # CreateThread(NULL, 0, entry, arg, 0, NULL)
+        handle: i64 = CreateThread(0, 0, entry_addr, env_ptr, 0, 0)
+        return Thread(handle=handle)
+
+    # ------------------------------------------------------------------
+    # join — block until this thread exits, then close the handle.
+    # Calling join twice is a programming error (handle already closed).
+    # ------------------------------------------------------------------
+    fun join(self):
+        # 0xFFFFFFFF = INFINITE
+        WaitForSingleObject(self.handle, 0 - 1)
+        CloseHandle(self.handle)
+
+    # ------------------------------------------------------------------
+    # sleep — millisecond-granularity pause. Use Thread.yield_now() for
+    # a near-zero pause that just lets the scheduler pick someone else.
+    # ------------------------------------------------------------------
+    static fun sleep(ms: i32):
+        Sleep(ms)
+
+    # ------------------------------------------------------------------
+    # yield_now — voluntarily give up the rest of this thread's
+    # quantum. SwitchToThread returns 0 if there's nothing else to run.
+    # ------------------------------------------------------------------
+    static fun yield_now():
+        SwitchToThread()
+
+    # ------------------------------------------------------------------
+    # current_id — the OS thread ID (useful for logging and debugging).
+    # Distinct from a Thread handle — IDs may be reused after a thread
+    # exits, handles do not.
+    # ------------------------------------------------------------------
+    static fun current_id() -> i32:
+        return GetCurrentThreadId()

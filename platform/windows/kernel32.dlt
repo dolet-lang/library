@@ -4,7 +4,10 @@
 
 # Windows API for time functions
 extern lib "kernel32":
+    fun GetModuleHandleA(lpModuleName: i64) -> i64
     fun Sleep(dwMilliseconds: i32)
+    fun GetLastError() -> i32
+    fun SetLastError(dwErrCode: i32)
     fun GetSystemTimeAsFileTime(lpFileTime: i64)  # ptr to FILETIME struct
     fun QueryPerformanceCounter(lpCounter: i64) -> i32  # ptr to LARGE_INTEGER
     fun QueryPerformanceFrequency(lpFrequency: i64) -> i32  # ptr to LARGE_INTEGER
@@ -66,3 +69,11 @@ extern lib "kernel32":
     fun LeaveCriticalSection(lpCriticalSection: i64)
     # Returns non-zero iff the lock was acquired without blocking.
     fun TryEnterCriticalSection(lpCriticalSection: i64) -> i32
+    # CPU core-count APIs — std/thread_pool.dlt reads Core_Count from these.
+    # GetSystemInfo fills a 48-byte SYSTEM_INFO struct on x64; caller
+    # allocates the storage (Memory.malloc_zeroed(48)) and passes its address.
+    # dwNumberOfProcessors lives at offset 32.
+    fun GetSystemInfo(lpSystemInfo: i64)  # ptr to 48-byte SYSTEM_INFO struct
+    # GetActiveProcessorCount(0xFFFF = ALL_PROCESSOR_GROUPS) returns the
+    # total logical processor count directly (no struct).
+    fun GetActiveProcessorCount(GroupNumber: i32) -> i32

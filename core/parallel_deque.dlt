@@ -1,0 +1,184 @@
+requires core/memory
+requires core/atomic
+# ============================================================================
+# Work_Stealing_Deque — the load-balancing primitive for dolet-parallel.
+#
+# Lives in core/ because it is a PURE ALGORITHM: a lock-free-ish ring
+# buffer of i64 work-item handles plus two monotonic index counters.
+# No OS calls, no FFI, no allocator beyond Memory.malloc/free, no
+# threading runtime. It works anywhere a real CPU and the atomic
+# intrinsics exist — same tier as AtomicI64 and Memory.
+#
+# ---------------------------------------------------------------------------
+# The algorithm (Chase-Lev style, conservative SeqCst-only variant)
+# ---------------------------------------------------------------------------
+# A double-ended queue with an asymmetric access pattern:
+#
+#   * The OWNER thread pushes and pops at the BOTTOM end (LIFO for the
+#     owner — recently pushed work runs first, which keeps the hot data
+#     in cache).
+#   * THIEF threads steal from the TOP end (FIFO from a thief's view —
+#     they grab the oldest, coldest item, minimizing contention with
+#     the owner who is busy at the other end).
+#
+# `top` and `bottom` are AtomicI64 counters that grow MONOTONICALLY and
+# never wrap in practice (i64). The physical slot for logical index k is
+#   buffer + (k & mask) * 8
+# where mask = capacity - 1 and capacity is a power of two. Masking maps
+# the ever-growing logical indices onto the fixed ring buffer.
+#
+# ---------------------------------------------------------------------------
+# Concurrency correctness (SeqCst-only — see design "Concurrency-
+# Correctness Design")
+# ---------------------------------------------------------------------------
+# The only memory ordering available in Dolet today is SeqCst. That is
+# stronger (and slower) than the acquire/release fences the textbook
+# lock-free Chase-Lev deque uses, but it is CORRECT: every atomic
+# load/store/CAS is a full sequentially-consistent barrier, so all the
+# happens-before edges the algorithm needs are trivially satisfied.
+#
+# The single delicate moment is the LAST item: the owner's pop() and a
+# thief's steal() can target the very same slot. Both resolve the race
+# with a CAS on `top`:
+#   * Exactly one CAS succeeds (R4.3 "exactly one acquires").
+#   * The loser observes the failed CAS and reports it: the owner
+#     returns EMPTY, the thief returns ABORT (caller moves on to the
+#     next victim).
+# Because handles are published into the buffer BEFORE `bottom` is
+# bumped, and consumed only AFTER a successful index CAS, no torn or
+# duplicated handle can escape.
+#
+# A full lock-free Chase-Lev with acquire/release ordering (and a
+# growable buffer) is documented future work — this conservative
+# version trades a little throughput for obviously-correct behavior.
+#
+# ---------------------------------------------------------------------------
+# Sentinels
+# ---------------------------------------------------------------------------
+# All real work-item handles are >= 0 (they are offsets / indices into
+# the submission arena). That frees two negative values as sentinels:
+#   DEQUE_EMPTY = -1  → nothing to take right now
+#   DEQUE_ABORT = -2  → a thief lost the CAS race; retry elsewhere
+# ============================================================================
+
+# Returned by pop()/steal() when the deque holds no item for the caller.
+const DEQUE_EMPTY: i64 = -1
+# Returned by steal() when a concurrent thief won the CAS for the item.
+const DEQUE_ABORT: i64 = -2
+
+# `@heap struct` — every Work_Stealing_Deque lives on the heap so its
+# address (and the addresses of the atomics it owns) stay stable across
+# thread spawns. The constructor allocates automatically.
+@heap
+struct Work_Stealing_Deque:
+    buffer:   i64        # Memory.malloc(capacity * 8) — capacity i64 slots
+    capacity: i64        # power of two; mask = capacity - 1
+    top:      AtomicI64  # steal end — bumped by thieves (and by the owner
+                         # when it pops the last item)
+    bottom:   AtomicI64  # owner end — push/pop
+
+attach Work_Stealing_Deque:
+    # ------------------------------------------------------------------
+    # new — allocate the ring buffer and the two index atomics.
+    # `capacity` MUST be a power of two (caller's contract); mask is
+    # derived as capacity - 1. top and bottom both start at 0 (empty).
+    # Pair with destroy() to avoid leaking the buffer + atomics.
+    # ------------------------------------------------------------------
+    static fun new(capacity: i64) -> Work_Stealing_Deque:
+        buf: i64 = Memory.malloc(capacity * 8) as i64
+        t: AtomicI64 = AtomicI64.new(0 as i64)
+        b: AtomicI64 = AtomicI64.new(0 as i64)
+        return Work_Stealing_Deque(buffer=buf, capacity=capacity, top=t, bottom=b)
+
+    # ------------------------------------------------------------------
+    # push — OWNER ONLY. Store `item` at the bottom end and bump bottom.
+    # No CAS needed: only the owner ever touches the bottom end for a
+    # push, and the slot is published (written) before bottom advances,
+    # so a thief reading top can never see a half-written slot.
+    # ------------------------------------------------------------------
+    fun push(self, item: i64):
+        b: i64 = self.bottom.load()
+        mask: i64 = self.capacity - 1
+        Memory.write_i64(self.buffer + (b & mask) * 8, item)
+        self.bottom.store(b + 1)
+
+    # ------------------------------------------------------------------
+    # pop — OWNER ONLY. LIFO: returns the most recently pushed item from
+    # the bottom end, or DEQUE_EMPTY when there is nothing to take.
+    #
+    # Speculatively decrements bottom, then compares against top:
+    #   * top < new_bottom  → more than one item, no thief can be on this
+    #                          slot, return it with no CAS.
+    #   * top == new_bottom → this is the LAST item; a thief may be after
+    #                          the same slot. Resolve via CAS on top:
+    #                          win → return item, lose → EMPTY.
+    #   * top >  new_bottom → already empty; restore bottom, return EMPTY.
+    # ------------------------------------------------------------------
+    fun pop(self) -> i64:
+        b: i64 = self.bottom.load() - 1
+        mask: i64 = self.capacity - 1
+        self.bottom.store(b)
+        t: i64 = self.top.load()
+        if t > b:
+            # Deque was already empty. Restore bottom to the canonical
+            # empty state (top == bottom) and report EMPTY.
+            self.bottom.store(t)
+            return DEQUE_EMPTY
+        # At least one item is available at slot b.
+        item: i64 = Memory.read_i64(self.buffer + (b & mask) * 8)
+        if t == b:
+            # Last item — race with a thief for slot t. Whoever wins the
+            # CAS on top owns the item.
+            if self.top.cas(t, t + 1):
+                # Owner won. Normalize empty state: top is now t+1, set
+                # bottom to match so the deque reads as empty.
+                self.bottom.store(t + 1)
+                return item
+            # A thief took the last item first. Deque is now empty.
+            self.bottom.store(t + 1)
+            return DEQUE_EMPTY
+        # t < b: comfortably more than one item — owner takes it freely.
+        return item
+
+    # ------------------------------------------------------------------
+    # steal — THIEF. FIFO: takes the oldest item from the top end.
+    # Returns DEQUE_EMPTY when the deque is (observably) empty, or
+    # DEQUE_ABORT when another thief / the owner won the CAS for the
+    # item this call targeted. The caller treats ABORT as "try another
+    # victim" — never as a hard error.
+    # ------------------------------------------------------------------
+    fun steal(self) -> i64:
+        t: i64 = self.top.load()
+        b: i64 = self.bottom.load()
+        if t >= b:
+            # Empty: top has caught up to (or passed) bottom.
+            return DEQUE_EMPTY
+        mask: i64 = self.capacity - 1
+        # Read the candidate BEFORE the CAS. If the CAS fails the value
+        # is simply discarded — we never expose an un-CAS'd item.
+        item: i64 = Memory.read_i64(self.buffer + (t & mask) * 8)
+        if self.top.cas(t, t + 1):
+            return item
+        # Lost the race for slot t; let the caller retry elsewhere.
+        return DEQUE_ABORT
+
+    # ------------------------------------------------------------------
+    # is_empty — best-effort emptiness check (top has reached bottom).
+    # Under concurrency this is a snapshot: true means "looked empty at
+    # this instant". Callers that need a definitive take use pop/steal.
+    # ------------------------------------------------------------------
+    fun is_empty(self) -> bool:
+        b: i64 = self.bottom.load()
+        t: i64 = self.top.load()
+        return t >= b
+
+    # ------------------------------------------------------------------
+    # destroy — free the ring buffer and the two atomics' heap storage.
+    # AtomicI64 is itself an @heap struct whose storage IS its pointer,
+    # so freeing the pointer releases the atomic. Call exactly once when
+    # no thread will touch this deque again.
+    # ------------------------------------------------------------------
+    fun destroy(self):
+        Memory.free(self.buffer)
+        Memory.free(self.top as i64)
+        Memory.free(self.bottom as i64)

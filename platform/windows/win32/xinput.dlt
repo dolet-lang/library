@@ -1,0 +1,7 @@
+# ============================
+#  Win32 XInput Bindings
+# ============================
+# Raw XInput declarations for Windows gamepad support.
+
+extern lib "xinput1_4":
+    fun XInputGetState(dwUserIndex: i32, pState: i64) -> i32

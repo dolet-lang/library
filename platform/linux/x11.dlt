@@ -1,0 +1,72 @@
+# ============================================================================
+# X11 Raw Bindings - Linux platform layer
+# ============================================================================
+
+# Event types
+X11_KEY_PRESS: i32 = 2
+X11_KEY_RELEASE: i32 = 3
+X11_BUTTON_PRESS: i32 = 4
+X11_BUTTON_RELEASE: i32 = 5
+X11_MOTION_NOTIFY: i32 = 6
+X11_FOCUS_IN: i32 = 9
+X11_FOCUS_OUT: i32 = 10
+X11_EXPOSE: i32 = 12
+X11_DESTROY_NOTIFY: i32 = 17
+X11_CONFIGURE_NOTIFY: i32 = 22
+X11_CLIENT_MESSAGE: i32 = 33
+
+# Event masks
+X11_KEY_PRESS_MASK: i64 = 1
+X11_KEY_RELEASE_MASK: i64 = 2
+X11_BUTTON_PRESS_MASK: i64 = 4
+X11_BUTTON_RELEASE_MASK: i64 = 8
+X11_POINTER_MOTION_MASK: i64 = 64
+X11_EXPOSURE_MASK: i64 = 32768
+X11_STRUCTURE_NOTIFY_MASK: i64 = 131072
+X11_FOCUS_CHANGE_MASK: i64 = 2097152
+
+# Pointer button masks returned by XQueryPointer.
+X11_BUTTON1_MASK: i32 = 256
+X11_BUTTON3_MASK: i32 = 1024
+
+# KeySyms used by Frog/input. ASCII letters use lowercase keysyms.
+XK_SPACE: i64 = 32
+XK_A: i64 = 97
+XK_D: i64 = 100
+XK_E: i64 = 101
+XK_F: i64 = 102
+XK_G: i64 = 103
+XK_M: i64 = 109
+XK_Q: i64 = 113
+XK_S: i64 = 115
+XK_W: i64 = 119
+XK_ESCAPE: i64 = 65307
+XK_LEFT: i64 = 65361
+XK_UP: i64 = 65362
+XK_RIGHT: i64 = 65363
+XK_DOWN: i64 = 65364
+XK_SHIFT_L: i64 = 65505
+XK_CONTROL_L: i64 = 65507
+
+extern lib "X11":
+    fun XOpenDisplay(display_name: i64) -> i64
+    fun XDefaultScreen(display: i64) -> i32
+    fun XRootWindow(display: i64, screen_number: i32) -> i64
+    fun XBlackPixel(display: i64, screen_number: i32) -> i64
+    fun XWhitePixel(display: i64, screen_number: i32) -> i64
+    fun XCreateSimpleWindow(display: i64, parent: i64, x: i32, y: i32, width: i32, height: i32, border_width: i32, border: i64, background: i64) -> i64
+    fun XStoreName(display: i64, w: i64, name: str) -> i32
+    fun XMapWindow(display: i64, w: i64) -> i32
+    fun XDestroyWindow(display: i64, w: i64) -> i32
+    fun XCloseDisplay(display: i64) -> i32
+    fun XPending(display: i64) -> i32
+    fun XNextEvent(display: i64, event_return: i64) -> i32
+    fun XSelectInput(display: i64, w: i64, event_mask: i64) -> i32
+    fun XFlush(display: i64) -> i32
+    fun XSync(display: i64, discard: i32) -> i32
+    fun XWarpPointer(display: i64, src_w: i64, dest_w: i64, src_x: i32, src_y: i32, src_width: i32, src_height: i32, dest_x: i32, dest_y: i32) -> i32
+    fun XQueryPointer(display: i64, w: i64, root_return: i64, child_return: i64, root_x_return: i64, root_y_return: i64, win_x_return: i64, win_y_return: i64, mask_return: i64) -> i32
+    fun XKeysymToKeycode(display: i64, keysym: i64) -> i32
+    fun XQueryKeymap(display: i64, keys_return: i64) -> i32
+    fun XInternAtom(display: i64, atom_name: str, only_if_exists: i32) -> i64
+    fun XSetWMProtocols(display: i64, w: i64, protocols: i64, count: i32) -> i32

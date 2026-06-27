@@ -1,0 +1,48 @@
+# ============================================================================
+# Thread - Linux facade.
+#
+# Real Linux thread spawn needs clone/clone3 plus a correct child stack,
+# TLS/runtime rules, and futex-backed join. Until that lands, keep the
+# public API present without pulling Windows symbols into Linux builds.
+# ============================================================================
+
+requires platform/linux/syscalls
+
+fun __thread_entry(env: i64) -> i32:
+    __closure: @heap fun() = env as @heap fun()
+    __closure()
+    return 0
+
+struct Thread:
+    handle: i64
+
+attach Thread:
+    static fun spawn(f: @heap fun()) -> Thread:
+        # Placeholder: real Linux threading is intentionally not faked.
+        # The closure is not run here; callers can detect unsupported
+        # spawn by handle == 0 until clone/futex support is implemented.
+        return Thread(handle=0)
+
+    fun join(self):
+        return
+
+    static fun sleep(ms: i32):
+        if ms <= 0:
+            return
+        ts: i64 = dsl_malloc(16)
+        sec: i64 = (ms / 1000) as i64
+        nsec: i64 = ((ms - ((ms / 1000) * 1000)) * 1000000) as i64
+        Memory.write_i64(ts, sec)
+        Memory.write_i64(ts + 8, nsec)
+        dsl_nanosleep(ts, 0)
+        dsl_free(ts)
+
+    static fun yield_now():
+        ts: i64 = dsl_malloc(16)
+        Memory.write_i64(ts, 0)
+        Memory.write_i64(ts + 8, 0)
+        dsl_nanosleep(ts, 0)
+        dsl_free(ts)
+
+    static fun current_id() -> i32:
+        return dsl_getpid()

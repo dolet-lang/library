@@ -59,6 +59,15 @@ struct PathOps:
             return "" as str
         return buffer as str
 
+    # Check if a file or directory exists at the given path.
+    # Returns 1 if exists, 0 if not or if access is denied.
+    static fun exists(path: str) -> i32:
+        fd: i32 = dsl_open(path, 0, 0)
+        if fd < 0:
+            return 0
+        dsl_close(fd)
+        return 1
+
     static fun resolve_path(path: str) -> str:
         # On Linux without libc's realpath, just return the path as-is
         # (resolve_from_exe handles relative→absolute)

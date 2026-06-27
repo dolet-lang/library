@@ -8,7 +8,7 @@
 #   nanosleep=35, getpid=39, socket=41, connect=42, accept=43,
 #   sendto=44, recvfrom=45, bind=49, listen=50, setsockopt=54,
 #   fork=57, execve=59, exit=60, wait4=61, getcwd=79, readlink=89,
-#   clock_gettime=228
+#   getdents64=217, clock_gettime=228
 # ============================================================================
 
 extern lib "dsl_runtime":
@@ -39,6 +39,7 @@ extern lib "dsl_runtime":
     fun dsl_fork() -> i32
     fun dsl_execve(path: str, argv: i64, envp: i64) -> i32
     fun dsl_waitpid(pid: i32, status: i64, options: i32) -> i32
+    fun dsl_getdents64(fd: i32, buf: i64, count: i64) -> i64
     # Path
     fun dsl_readlink(path: str, buf: i64, bufsize: i64) -> i64
     # Time

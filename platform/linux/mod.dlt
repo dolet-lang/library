@@ -7,6 +7,11 @@ load platform/linux/file
 load platform/linux/path
 load platform/linux/args
 load platform/linux/process
+load platform/linux/info
+load platform/linux/dir
+load platform/linux/time
+load platform/linux/console
+load platform/linux/net
 
 # Selective import mappings for this platform
 expose platform/linux/format as format

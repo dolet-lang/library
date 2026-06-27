@@ -4,7 +4,15 @@
 
 requires platform/linux/syscalls
 
+struct Output:
+    code: i32
+    stdout: str
+    stderr: str
+
 struct Process:
+    static fun exit(code: i32):
+        dsl_exit(code)
+
     # Run a shell command via /bin/sh -c
     # Returns: exit code (0 = success)
     static fun run(command: str) -> i32:
@@ -36,3 +44,7 @@ struct Process:
         # TODO: implement pipe-based capture on Linux
         Process.run(command)
         return ""
+
+    static fun run_output(command: str) -> Output:
+        code: i32 = Process.run(command)
+        return Output(code=code, stdout="", stderr="")
