@@ -31,9 +31,9 @@
 # alloc returns 0 (caller must handle).
 # ============================================================================
 
-const ARENA_OFF_BASE:     i64 = 0
-const ARENA_OFF_CURSOR:   i64 = 8
-const ARENA_OFF_CAPACITY: i64 = 16
+imm ARENA_OFF_BASE:     i64 = 0
+imm ARENA_OFF_CURSOR:   i64 = 8
+imm ARENA_OFF_CAPACITY: i64 = 16
 
 fun _scope_arena_init():
     st: i64 = Memory.arena_state()

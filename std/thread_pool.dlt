@@ -46,23 +46,23 @@ requires platform/{platform}/mutex
 # ============================================================================
 
 # Lifecycle state machine for `state` (AtomicI32):
-const POOL_STATE_UNINIT:   i32 = 0   # never initialized
-const POOL_STATE_RUNNING:  i32 = 1   # workers alive, accepting work
-const POOL_STATE_SHUTDOWN: i32 = 2   # shutting down / shut down
+imm POOL_STATE_UNINIT:   i32 = 0   # never initialized
+imm POOL_STATE_RUNNING:  i32 = 1   # workers alive, accepting work
+imm POOL_STATE_SHUTDOWN: i32 = 2   # shutting down / shut down
 
 # Per-worker deque capacity (MUST be a power of two — see deque docs).
-const POOL_DEQUE_CAPACITY: i64 = 1024
+imm POOL_DEQUE_CAPACITY: i64 = 1024
 
 # Deep-park wait timeout (ms). A parked worker blocks on the wake event
 # for at most this long before re-checking its state on its own. The
 # event makes wakeups immediate in the common case; this timeout is only
 # a liveness safety net against a missed/raced wake, so it can be modest
 # without burning idle CPU.
-const PARK_WAIT_MS: i32 = 2
+imm PARK_WAIT_MS: i32 = 2
 
 # Work-item record `kind` discriminator (offset 0 of every record):
-const WORK_KIND_RANGE: i64 = 0   # parallel_for chunk: [lo,hi) over a body
-const WORK_KIND_TASK:  i64 = 1   # spawn_task: a single fire-and-forget work
+imm WORK_KIND_RANGE: i64 = 0   # parallel_for chunk: [lo,hi) over a body
+imm WORK_KIND_TASK:  i64 = 1   # spawn_task: a single fire-and-forget work
 
 # ============================================================================
 # ThreadPool struct

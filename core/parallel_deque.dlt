@@ -62,9 +62,9 @@ requires core/atomic
 # ============================================================================
 
 # Returned by pop()/steal() when the deque holds no item for the caller.
-const DEQUE_EMPTY: i64 = -1
+imm DEQUE_EMPTY: i64 = -1
 # Returned by steal() when a concurrent thief won the CAS for the item.
-const DEQUE_ABORT: i64 = -2
+imm DEQUE_ABORT: i64 = -2
 
 # `@heap struct` — every Work_Stealing_Deque lives on the heap so its
 # address (and the addresses of the atomics it owns) stay stable across
