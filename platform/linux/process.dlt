@@ -1,50 +1,197 @@
-# ============================================================================
-# Process - Process execution (Linux — raw fork/execve/waitpid, NO libc)
-# ============================================================================
-
-requires platform/linux/syscalls
+requires platform/linux/libc
 
 struct Output:
     code: i32
     stdout: str
     stderr: str
 
+fun __linux_wait_code(status: i32) -> i32:
+    signal: i32 = status & 127
+    if signal == 0:
+        return (status >> 8) & 255
+    return 128 + signal
+
+fun __linux_capture(command: str) -> Output:
+    merged_command: str = Str.concat(command, " 2>&1")
+    stream: i64 = popen(merged_command, "r")
+    if stream == 0:
+        return Output(code=-1, stdout="", stderr="")
+    capacity: i64 = 4096
+    length: i64 = 0
+    output: i64 = Memory.malloc(capacity)
+    chunk: i64 = Memory.malloc(4096)
+    if output == 0 or chunk == 0:
+        if output != 0:
+            Memory.free(output)
+        if chunk != 0:
+            Memory.free(chunk)
+        pclose(stream)
+        return Output(code=-1, stdout="", stderr="")
+    reading: bool = true
+    got: i64 = 0
+    grown: i64 = 0
+    while reading:
+        got = fread(chunk, 1, 4096, stream)
+        if got == 0:
+            reading = false
+        else:
+            while length + got + 1 > capacity:
+                capacity = capacity * 2
+            grown = Memory.realloc(output, capacity)
+            if grown == 0:
+                Memory.free(output)
+                Memory.free(chunk)
+                pclose(stream)
+                return Output(code=-1, stdout="", stderr="")
+            output = grown
+            Memory.copy(output + length, chunk, got)
+            length = length + got
+    Memory.write_i8(output + length, 0 as i8)
+    Memory.free(chunk)
+    status: i32 = pclose(stream)
+    code: i32 = status
+    if status >= 0:
+        code = __linux_wait_code(status)
+    return Output(code=code, stdout=output as str, stderr="")
+
+fun __linux_output(command: str) -> Output:
+    out_pipe: i64 = Memory.malloc_zeroed(8)
+    err_pipe: i64 = Memory.malloc_zeroed(8)
+    if out_pipe == 0 or err_pipe == 0:
+        return Output(code=-1, stdout="", stderr="")
+    if pipe(out_pipe) != 0 or pipe(err_pipe) != 0:
+        Memory.free(out_pipe)
+        Memory.free(err_pipe)
+        return Output(code=-1, stdout="", stderr="")
+
+    out_read: i32 = Memory.read_i32(out_pipe)
+    out_write: i32 = Memory.read_i32(out_pipe + 4)
+    err_read: i32 = Memory.read_i32(err_pipe)
+    err_write: i32 = Memory.read_i32(err_pipe + 4)
+    pid: i32 = fork()
+    if pid == 0:
+        close(out_read)
+        close(err_read)
+        dup2(out_write, 1)
+        dup2(err_write, 2)
+        close(out_write)
+        close(err_write)
+        arguments: i64 = Memory.malloc_zeroed(32)
+        if arguments == 0:
+            _exit(127)
+        Memory.write_i64(arguments, "sh" as i64)
+        Memory.write_i64(arguments + 8, "-c" as i64)
+        Memory.write_i64(arguments + 16, command as i64)
+        Memory.write_i64(arguments + 24, 0)
+        execv("/bin/sh", arguments)
+        _exit(127)
+
+    close(out_write)
+    close(err_write)
+    Memory.free(out_pipe)
+    Memory.free(err_pipe)
+    if pid < 0:
+        close(out_read)
+        close(err_read)
+        return Output(code=-1, stdout="", stderr="")
+
+    out_capacity: i64 = 4096
+    err_capacity: i64 = 4096
+    out_length: i64 = 0
+    err_length: i64 = 0
+    out_buffer: i64 = Memory.malloc(out_capacity)
+    err_buffer: i64 = Memory.malloc(err_capacity)
+    chunk: i64 = Memory.malloc(4096)
+    pollfds: i64 = Memory.malloc_zeroed(16)
+    out_open: bool = true
+    err_open: bool = true
+    poll_result: i32 = 0
+    out_events: i16 = 0 as i16
+    err_events: i16 = 0 as i16
+    got_out: i64 = 0
+    got_err: i64 = 0
+    grown_out: i64 = 0
+    grown_err: i64 = 0
+
+    while out_open or err_open:
+        if out_open:
+            Memory.write_i32(pollfds, out_read)
+        else:
+            Memory.write_i32(pollfds, -1)
+        Memory.write_i16(pollfds + 4, 1 as i16)
+        Memory.write_i16(pollfds + 6, 0 as i16)
+        if err_open:
+            Memory.write_i32(pollfds + 8, err_read)
+        else:
+            Memory.write_i32(pollfds + 8, -1)
+        Memory.write_i16(pollfds + 12, 1 as i16)
+        Memory.write_i16(pollfds + 14, 0 as i16)
+
+        poll_result = poll(pollfds, 2, -1)
+        if poll_result >= 0:
+            out_events = Memory.read_i16(pollfds + 6)
+            err_events = Memory.read_i16(pollfds + 14)
+            if out_open and out_events != 0 as i16:
+                got_out = read(out_read, chunk, 4096)
+                if got_out <= 0:
+                    close(out_read)
+                    out_open = false
+                else:
+                    while out_length + got_out + 1 > out_capacity:
+                        out_capacity = out_capacity * 2
+                    grown_out = Memory.realloc(out_buffer, out_capacity)
+                    if grown_out == 0:
+                        close(out_read)
+                        out_open = false
+                    else:
+                        out_buffer = grown_out
+                        Memory.copy(out_buffer + out_length, chunk, got_out)
+                        out_length = out_length + got_out
+            if err_open and err_events != 0 as i16:
+                got_err = read(err_read, chunk, 4096)
+                if got_err <= 0:
+                    close(err_read)
+                    err_open = false
+                else:
+                    while err_length + got_err + 1 > err_capacity:
+                        err_capacity = err_capacity * 2
+                    grown_err = Memory.realloc(err_buffer, err_capacity)
+                    if grown_err == 0:
+                        close(err_read)
+                        err_open = false
+                    else:
+                        err_buffer = grown_err
+                        Memory.copy(err_buffer + err_length, chunk, got_err)
+                        err_length = err_length + got_err
+
+    Memory.write_i8(out_buffer + out_length, 0 as i8)
+    Memory.write_i8(err_buffer + err_length, 0 as i8)
+    status_ptr: i64 = Memory.malloc_zeroed(4)
+    waitpid(pid, status_ptr, 0)
+    status: i32 = Memory.read_i32(status_ptr)
+    code: i32 = __linux_wait_code(status)
+    stdout_clean: str = Str.trim(out_buffer as str)
+    stderr_clean: str = Str.trim(err_buffer as str)
+    Memory.free(status_ptr)
+    Memory.free(out_buffer)
+    Memory.free(err_buffer)
+    Memory.free(chunk)
+    Memory.free(pollfds)
+    return Output(code=code, stdout=stdout_clean, stderr=stderr_clean)
+
 struct Process:
     static fun exit(code: i32):
-        dsl_exit(code)
+        exit(code)
 
-    # Run a shell command via /bin/sh -c
-    # Returns: exit code (0 = success)
     static fun run(command: str) -> i32:
-        pid: i32 = dsl_fork()
-        if pid == 0:
-            # Child: exec /bin/sh -c "command"
-            argv: i64 = dsl_malloc(32)
-            sh: str = "/bin/sh"
-            flag: str = "-c"
-            Memory.write_i64(argv, sh as i64)
-            Memory.write_i64(argv + 8, flag as i64)
-            Memory.write_i64(argv + 16, command as i64)
-            Memory.write_i64(argv + 24, 0)
-            dsl_execve(sh, argv, 0)
-            dsl_exit(127)
-        if pid < 0:
-            return -1
-        # Parent: wait for child
-        status_buf: i64 = dsl_malloc(4)
-        dsl_waitpid(pid, status_buf, 0)
-        status: i32 = Memory.read_i32(status_buf)
-        dsl_free(status_buf)
-        # WEXITSTATUS = (status >> 8) & 0xFF
-        exit_code: i32 = (status / 256) as i32
-        return exit_code
+        status: i32 = system(command)
+        if status < 0:
+            return status
+        return __linux_wait_code(status)
 
-    # Run command and capture stdout output
     static fun run_capture(command: str) -> str:
-        # TODO: implement pipe-based capture on Linux
-        Process.run(command)
-        return ""
+        captured: Output = __linux_capture(command)
+        return captured.stdout
 
     static fun run_output(command: str) -> Output:
-        code: i32 = Process.run(command)
-        return Output(code=code, stdout="", stderr="")
+        return __linux_output(command)

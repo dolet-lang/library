@@ -1,16 +1,8 @@
-# ============================================================================
-# Thread - Linux facade.
-#
-# Real Linux thread spawn needs clone/clone3 plus a correct child stack,
-# TLS/runtime rules, and futex-backed join. Until that lands, keep the
-# public API present without pulling Windows symbols into Linux builds.
-# ============================================================================
+requires platform/linux/libc
 
-requires platform/linux/syscalls
-
-fun __thread_entry(env: i64) -> i32:
-    __closure: @heap fun() = env as @heap fun()
-    __closure()
+fun __thread_entry(env: i64) -> i64:
+    closure: @heap fun() = env as @heap fun()
+    closure()
     return 0
 
 struct Thread:
@@ -18,60 +10,90 @@ struct Thread:
 
 attach Thread:
     static fun spawn(f: @heap fun()) -> Thread:
-        # Placeholder: real Linux threading is intentionally not faked.
-        # The closure is not run here; callers can detect unsupported
-        # spawn by handle == 0 until clone/futex support is implemented.
-        return Thread(handle=0)
+        handle_out: i64 = Memory.malloc_zeroed(8)
+        rc: i32 = pthread_create(handle_out, 0, __thread_entry as i64, f as i64)
+        if rc != 0:
+            Memory.free(handle_out)
+            return Thread(handle=0)
+        handle: i64 = Memory.read_i64(handle_out)
+        Memory.free(handle_out)
+        return Thread(handle=handle)
 
     fun join(self):
-        return
+        if self.handle != 0:
+            pthread_join(self.handle, 0)
 
     static fun sleep(ms: i32):
         if ms <= 0:
             return
-        ts: i64 = dsl_malloc(16)
-        sec: i64 = (ms / 1000) as i64
-        nsec: i64 = ((ms - ((ms / 1000) * 1000)) * 1000000) as i64
-        Memory.write_i64(ts, sec)
-        Memory.write_i64(ts + 8, nsec)
-        dsl_nanosleep(ts, 0)
-        dsl_free(ts)
+        request: i64 = Memory.malloc_zeroed(16)
+        Memory.write_i64(request, (ms / 1000) as i64)
+        Memory.write_i64(request + 8, ((ms - ((ms / 1000) * 1000)) as i64) * 1000000)
+        nanosleep(request, 0)
+        Memory.free(request)
 
     static fun yield_now():
-        ts: i64 = dsl_malloc(16)
-        Memory.write_i64(ts, 0)
-        Memory.write_i64(ts + 8, 0)
-        dsl_nanosleep(ts, 0)
-        dsl_free(ts)
+        sched_yield()
 
     static fun current_id() -> i32:
-        return dsl_getpid()
+        return pthread_self() as i32
 
-# ============================================================================
-# ParkEvent — Linux facade matching the Windows ParkEvent API so std/
-# thread_pool.dlt compiles identically across platforms. Real Linux
-# threading is a placeholder (Thread.spawn returns handle==0 -> the pool
-# runs in serial mode), so the pool never actually parks here. These
-# methods are therefore correct no-ops: wait() just sleeps out its
-# timeout, signal()/reset()/destroy() do nothing. A futex-backed
-# implementation lands alongside real clone/futex thread support.
-# ============================================================================
+# Manual-reset broadcast event used by std's worker pool. The storage sizes
+# are part of this x86_64-gnu ABI pack and are verified by conformance tests.
+PTHREAD_MUTEX_STORAGE: i64 = 64
+PTHREAD_COND_STORAGE: i64 = 64
+PARK_EVENT_FLAG_OFFSET: i64 = 128
+PARK_EVENT_STORAGE: i64 = 136
+
 @heap
 struct ParkEvent:
-    handle: i64
+    state: i64
 
 attach ParkEvent:
     static fun new() -> ParkEvent:
-        return ParkEvent(handle=0)
+        state: i64 = Memory.malloc_zeroed(PARK_EVENT_STORAGE)
+        pthread_mutex_init(state, 0)
+        pthread_cond_init(state + PTHREAD_MUTEX_STORAGE, 0)
+        return ParkEvent(state=state)
 
     fun wait(self, ms: i32):
-        Thread.sleep(ms)
+        if self.state == 0:
+            return
+        mutex: i64 = self.state
+        condition: i64 = self.state + PTHREAD_MUTEX_STORAGE
+        pthread_mutex_lock(mutex)
+        if Memory.read_i32(self.state + PARK_EVENT_FLAG_OFFSET) == 0:
+            deadline: i64 = Memory.malloc_zeroed(16)
+            clock_gettime(0, deadline)
+            sec: i64 = Memory.read_i64(deadline)
+            nanos: i64 = Memory.read_i64(deadline + 8) + ((ms as i64) * 1000000)
+            sec = sec + (nanos / 1000000000)
+            nanos = nanos - ((nanos / 1000000000) * 1000000000)
+            Memory.write_i64(deadline, sec)
+            Memory.write_i64(deadline + 8, nanos)
+            pthread_cond_timedwait(condition, mutex, deadline)
+            Memory.free(deadline)
+        pthread_mutex_unlock(mutex)
 
     fun signal(self):
-        return
+        if self.state == 0:
+            return
+        pthread_mutex_lock(self.state)
+        Memory.write_i32(self.state + PARK_EVENT_FLAG_OFFSET, 1)
+        pthread_cond_broadcast(self.state + PTHREAD_MUTEX_STORAGE)
+        pthread_mutex_unlock(self.state)
 
     fun reset(self):
-        return
+        if self.state == 0:
+            return
+        pthread_mutex_lock(self.state)
+        Memory.write_i32(self.state + PARK_EVENT_FLAG_OFFSET, 0)
+        pthread_mutex_unlock(self.state)
 
     fun destroy(self):
-        return
+        if self.state == 0:
+            return
+        pthread_cond_destroy(self.state + PTHREAD_MUTEX_STORAGE)
+        pthread_mutex_destroy(self.state)
+        Memory.free(self.state)
+        self.state = 0

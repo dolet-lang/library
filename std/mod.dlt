@@ -31,6 +31,7 @@ export Command
 export Argv
 export System
 export Dir
+export NetOps
 export Time
 export dolet_panic
 export List

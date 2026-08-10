@@ -1,0 +1,11 @@
+# Windows-only raw API registry. Loaded only when a Windows target pack is
+# selected; platform-neutral std code never imports these modules directly.
+module platform/windows/mod as sys.windows
+module platform/windows/kernel32 as sys.windows.kernel32
+module platform/windows/win32/types as sys.windows.win32.types
+module platform/windows/win32/constants as sys.windows.win32.constants
+module platform/windows/win32/user32 as sys.windows.win32.user32
+module platform/windows/win32/gdi32 as sys.windows.win32.gdi32
+module platform/windows/win32/xinput as sys.windows.win32.xinput
+module platform/windows/win32/winsock as sys.windows.win32.winsock
+module platform/windows/win32/vulkan_surface as sys.windows.win32.vulkan_surface

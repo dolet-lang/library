@@ -32,6 +32,10 @@
 # INVALID_HANDLE_VALUE = -1
 
 struct FileOps:
+    # Delete a filesystem entry. Returns non-zero on success.
+    static fun file_delete(path: str) -> i32:
+        return DeleteFileA(path)
+
     # ========== File Open/Close ==========
     
     # Open file for reading

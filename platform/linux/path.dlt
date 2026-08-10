@@ -1,217 +1,140 @@
-# ============================================================================
-# PathOps - Path operations (Linux — raw readlink/getcwd syscalls, NO libc)
-# ============================================================================
-
-requires platform/linux/syscalls
+requires platform/linux/libc
 
 struct PathOps:
     static fun get_exe_path() -> str:
-        buffer: i64 = dsl_malloc(512)
+        capacity: i64 = 4096
+        buffer: i64 = Memory.malloc(capacity)
         if buffer == 0:
-            return "" as str
-        # readlink("/proc/self/exe") → absolute path of the running binary
-        length: i64 = dsl_readlink("/proc/self/exe", buffer, 511)
+            return ""
+        length: i64 = readlink("/proc/self/exe", buffer, capacity - 1)
         if length <= 0:
-            dsl_free(buffer)
-            return "" as str
+            Memory.free(buffer)
+            return ""
         Memory.write_i8(buffer + length, 0 as i8)
         return buffer as str
 
     static fun get_exe_directory() -> str:
         exe_path: str = PathOps.get_exe_path()
-        exe_len: i64 = Memory.strlen(exe_path)
-        if exe_len == 0:
+        if Memory.strlen(exe_path) == 0:
             return PathOps.get_cwd()
-        sep_pos: i64 = PathOps.find_last_separator(exe_path)
-        if sep_pos == -1:
-            dsl_free(exe_path as i64)
+        sep: i64 = PathOps.find_last_separator(exe_path)
+        if sep < 0:
+            Memory.free(exe_path as i64)
             return PathOps.get_cwd()
-        dir_len: i64 = sep_pos + 1
-        dir_buf: i64 = dsl_malloc(dir_len + 1)
-        if dir_buf == 0:
-            dsl_free(exe_path as i64)
-            return PathOps.get_cwd()
-        Memory.copy(dir_buf, exe_path as i64, dir_len)
-        Memory.write_i8(dir_buf + dir_len, 0 as i8)
-        dsl_free(exe_path as i64)
-        return dir_buf as str
-
-    static fun resolve_from_exe(path: str) -> str:
-        path_len: i64 = Memory.strlen(path)
-        if path_len == 0:
-            return PathOps.get_exe_directory()
-        if PathOps.is_absolute(path):
-            result_buf: i64 = dsl_malloc(path_len + 1)
-            Memory.copy(result_buf, path as i64, path_len + 1)
-            return result_buf as str
-        exe_dir: str = PathOps.get_exe_directory()
-        joined: str = PathOps.join_path(exe_dir, path)
-        dsl_free(exe_dir as i64)
-        return joined
+        result: i64 = Memory.malloc(sep + 2)
+        Memory.copy(result, exe_path as i64, sep + 1)
+        Memory.write_i8(result + sep + 1, 0 as i8)
+        Memory.free(exe_path as i64)
+        return result as str
 
     static fun get_cwd() -> str:
-        buffer: i64 = dsl_malloc(512)
-        if buffer == 0:
-            return "" as str
-        result: i64 = dsl_getcwd(buffer, 512)
+        result: i64 = getcwd(0, 0)
         if result == 0:
-            dsl_free(buffer)
-            return "" as str
-        return buffer as str
+            return ""
+        return result as str
 
-    # Check if a file or directory exists at the given path.
-    # Returns 1 if exists, 0 if not or if access is denied.
     static fun exists(path: str) -> i32:
-        fd: i32 = dsl_open(path, 0, 0)
-        if fd < 0:
-            return 0
-        dsl_close(fd)
-        return 1
+        if access(path, 0) == 0:
+            return 1
+        return 0
 
     static fun resolve_path(path: str) -> str:
-        # On Linux without libc's realpath, just return the path as-is
-        # (resolve_from_exe handles relative→absolute)
-        path_len: i64 = Memory.strlen(path)
-        if path_len == 0:
+        if Memory.strlen(path) == 0:
             return PathOps.get_cwd()
-        buf: i64 = dsl_malloc(path_len + 1)
-        Memory.copy(buf, path as i64, path_len + 1)
-        return buf as str
+        resolved: i64 = realpath(path, 0)
+        if resolved != 0:
+            return resolved as str
+        return Str.strcpy(path)
+
+    static fun resolve_from_exe(path: str) -> str:
+        if PathOps.is_absolute(path):
+            return Str.strcpy(path)
+        base: str = PathOps.get_exe_directory()
+        result: str = PathOps.join_path(base, path)
+        Memory.free(base as i64)
+        return result
 
     static fun normalize(path: str) -> str:
         path_len: i64 = Memory.strlen(path)
-        if path_len == 0:
-            empty_buf: i64 = dsl_malloc(1)
-            Memory.write_i8(empty_buf, 0 as i8)
-            return empty_buf as str
-        norm_buf: i64 = dsl_malloc(path_len + 1)
-        if norm_buf == 0:
-            return path
-        i: i64 = 0
-        j: i64 = 0
-        prev_was_sep: bool = false
-        c: i32 = 0
+        out: i64 = Memory.malloc(path_len + 1)
+        src: i64 = 0
+        dst: i64 = 0
+        previous_sep: bool = false
+        c: i8 = 0 as i8
         is_sep: bool = false
-        while i < path_len:
-            c = Memory.read_i8((path as i64) + i) as i32
+        while src < path_len:
+            c = Memory.read_i8((path as i64) + src)
             is_sep = c == 47
-            if is_sep and prev_was_sep:
-                i = i + 1
-            else:
-                Memory.write_i8(norm_buf + j, c as i8)
-                j = j + 1
-                prev_was_sep = is_sep
-                i = i + 1
-        Memory.write_i8(norm_buf + j, 0 as i8)
-        return norm_buf as str
+            if not (is_sep and previous_sep):
+                Memory.write_i8(out + dst, c)
+                dst = dst + 1
+            previous_sep = is_sep
+            src = src + 1
+        Memory.write_i8(out + dst, 0 as i8)
+        return out as str
 
-    # Check if path is absolute (starts with /)
     static fun is_absolute(path: str) -> bool:
-        path_len: i64 = Memory.strlen(path)
-        if path_len < 1:
+        if Memory.strlen(path) == 0:
             return false
-        first: i32 = Memory.read_i8(path as i64) as i32
-        return first == 47
+        return Memory.read_i8(path as i64) == 47 as i8
 
     static fun join_path(base: str, relative: str) -> str:
         if PathOps.is_absolute(relative):
-            rel_len: i64 = Memory.strlen(relative)
-            abs_buf: i64 = dsl_malloc(rel_len + 1)
-            Memory.copy(abs_buf, relative as i64, rel_len + 1)
-            return abs_buf as str
+            return Str.strcpy(relative)
         base_len: i64 = Memory.strlen(base)
-        rel_len: i64 = Memory.strlen(relative)
-        if base_len == 0:
-            empty_base_buf: i64 = dsl_malloc(rel_len + 1)
-            Memory.copy(empty_base_buf, relative as i64, rel_len + 1)
-            return empty_base_buf as str
-        last_char: i32 = Memory.read_i8((base as i64) + base_len - 1) as i32
-        needs_sep: bool = last_char != 47
-        sep_len: i64 = 0
-        if needs_sep:
-            sep_len = 1
-        total_len: i64 = base_len + sep_len + rel_len
-        join_buf: i64 = dsl_malloc(total_len + 1)
-        if join_buf == 0:
-            return base
-        Memory.copy(join_buf, base as i64, base_len)
-        if needs_sep:
-            Memory.write_i8(join_buf + base_len, 47 as i8)
-        Memory.copy(join_buf + base_len + sep_len, relative as i64, rel_len)
-        Memory.write_i8(join_buf + total_len, 0 as i8)
-        return join_buf as str
+        relative_len: i64 = Memory.strlen(relative)
+        add_separator: i64 = 1
+        if base_len == 0 or Memory.read_i8((base as i64) + base_len - 1) == 47 as i8:
+            add_separator = 0
+        result: i64 = Memory.malloc(base_len + add_separator + relative_len + 1)
+        Memory.copy(result, base as i64, base_len)
+        if add_separator == 1:
+            Memory.write_i8(result + base_len, 47 as i8)
+        Memory.copy(result + base_len + add_separator, relative as i64, relative_len)
+        Memory.write_i8(result + base_len + add_separator + relative_len, 0 as i8)
+        return result as str
 
     static fun find_last_separator(path: str) -> i64:
-        path_len: i64 = Memory.strlen(path)
-        pos: i64 = path_len - 1
-        c: i32 = 0
+        pos: i64 = Memory.strlen(path) - 1
         while pos >= 0:
-            c = Memory.read_i8((path as i64) + pos) as i32
-            if c == 47:
+            if Memory.read_i8((path as i64) + pos) == 47 as i8:
                 return pos
             pos = pos - 1
         return -1
 
     static fun get_filename(path: str) -> str:
         path_len: i64 = Memory.strlen(path)
-        if path_len == 0:
-            empty_fn: i64 = dsl_malloc(1)
-            Memory.write_i8(empty_fn, 0 as i8)
-            return empty_fn as str
-        sep_pos: i64 = PathOps.find_last_separator(path)
-        if sep_pos == -1:
-            full_fn: i64 = dsl_malloc(path_len + 1)
-            Memory.copy(full_fn, path as i64, path_len + 1)
-            return full_fn as str
-        start: i64 = sep_pos + 1
-        filename_len: i64 = path_len - start
-        fn_buf: i64 = dsl_malloc(filename_len + 1)
-        Memory.copy(fn_buf, (path as i64) + start, filename_len)
-        Memory.write_i8(fn_buf + filename_len, 0 as i8)
-        return fn_buf as str
+        sep: i64 = PathOps.find_last_separator(path)
+        start: i64 = sep + 1
+        length: i64 = path_len - start
+        result: i64 = Memory.malloc(length + 1)
+        Memory.copy(result, (path as i64) + start, length)
+        Memory.write_i8(result + length, 0 as i8)
+        return result as str
 
     static fun get_extension(path: str) -> str:
-        filename: str = PathOps.get_filename(path)
-        filename_len: i64 = Memory.strlen(filename)
-        if filename_len == 0:
-            empty_ext: i64 = dsl_malloc(1)
-            Memory.write_i8(empty_ext, 0 as i8)
-            return empty_ext as str
-        dot_pos: i64 = -1
-        i: i64 = filename_len - 1
-        c: i32 = 0
-        while i >= 0:
-            c = Memory.read_i8((filename as i64) + i) as i32
-            if c == 46:
-                dot_pos = i
-                i = -1
-            else:
-                i = i - 1
-        if dot_pos <= 0:
-            dsl_free(filename as i64)
-            no_ext: i64 = dsl_malloc(1)
-            Memory.write_i8(no_ext, 0 as i8)
-            return no_ext as str
-        ext_len: i64 = filename_len - dot_pos
-        ext_buf: i64 = dsl_malloc(ext_len + 1)
-        Memory.copy(ext_buf, (filename as i64) + dot_pos, ext_len)
-        Memory.write_i8(ext_buf + ext_len, 0 as i8)
-        dsl_free(filename as i64)
-        return ext_buf as str
+        name: str = PathOps.get_filename(path)
+        name_len: i64 = Memory.strlen(name)
+        dot: i64 = name_len - 1
+        length: i64 = 0
+        result: i64 = 0
+        while dot >= 0:
+            if Memory.read_i8((name as i64) + dot) == 46 as i8:
+                length = name_len - dot
+                result = Memory.malloc(length + 1)
+                Memory.copy(result, (name as i64) + dot, length)
+                Memory.write_i8(result + length, 0 as i8)
+                Memory.free(name as i64)
+                return result as str
+            dot = dot - 1
+        Memory.free(name as i64)
+        return ""
 
     static fun get_directory(path: str) -> str:
-        path_len: i64 = Memory.strlen(path)
-        if path_len == 0:
-            empty_dir: i64 = dsl_malloc(1)
-            Memory.write_i8(empty_dir, 0 as i8)
-            return empty_dir as str
-        sep_pos: i64 = PathOps.find_last_separator(path)
-        if sep_pos == -1:
-            no_dir: i64 = dsl_malloc(1)
-            Memory.write_i8(no_dir, 0 as i8)
-            return no_dir as str
-        dir_len: i64 = sep_pos + 1
-        dir_buf: i64 = dsl_malloc(dir_len + 1)
-        Memory.copy(dir_buf, path as i64, dir_len)
-        Memory.write_i8(dir_buf + dir_len, 0 as i8)
-        return dir_buf as str
+        sep: i64 = PathOps.find_last_separator(path)
+        if sep < 0:
+            return ""
+        result: i64 = Memory.malloc(sep + 2)
+        Memory.copy(result, path as i64, sep + 1)
+        Memory.write_i8(result + sep + 1, 0 as i8)
+        return result as str

@@ -1,5 +1,12 @@
-# info.dlt - Platform identification facade for Linux.
-
 struct PlatformInfo:
     static fun name() -> str:
         return "linux"
+
+    static fun host_id() -> str:
+        return "linux-x86_64"
+
+    static fun default_target() -> str:
+        return "linux/x86_64-gnu"
+
+    static fun path_separator() -> str:
+        return "/"

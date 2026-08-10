@@ -1,60 +1,31 @@
-# dir.dlt - Directory enumeration (Linux)
-#
-# Uses getdents64 directly. linux_dirent64 layout:
-#   d_ino:    u64 @ +0
-#   d_off:    i64 @ +8
-#   d_reclen: u16 @ +16
-#   d_type:   u8  @ +18
-#   d_name:   char[] @ +19
-
-requires platform/linux/syscalls
+requires platform/linux/libc
 
 struct Dir:
     static fun list(path: str) -> list<str>:
         result: list<str> = []
-        # O_RDONLY | O_DIRECTORY = 0 | 65536
-        fd: i32 = dsl_open(path, 65536, 0)
-        if fd < 0:
+        directory: i64 = opendir(path)
+        if directory == 0:
             return result
-
-        buf_size: i64 = 32768
-        buf: i64 = Memory.malloc(buf_size)
-        if buf == 0:
-            dsl_close(fd)
-            return result
-
-        reading: bool = true
-        while reading:
-            nread: i64 = dsl_getdents64(fd, buf, buf_size)
-            if nread <= 0:
-                reading = false
+        scanning: bool = true
+        entry: i64 = 0
+        name: str = ""
+        is_dot: bool = false
+        second: i8 = 0 as i8
+        while scanning:
+            entry = readdir(directory)
+            if entry == 0:
+                scanning = false
             else:
-                pos: i64 = 0
-                while pos < nread:
-                    entry: i64 = buf + pos
-                    reclen: i32 = Memory.read_i16(entry + 16) as i32
-                    if reclen <= 0:
-                        pos = nread
-                    else:
-                        name_ptr: i64 = entry + 19
-                        c0: i32 = Memory.read_i8(name_ptr) as i32
-                        skip: bool = false
-                        if c0 == 46:
-                            c1: i32 = Memory.read_i8(name_ptr + 1) as i32
-                            if c1 == 0:
-                                skip = true
-                            elif c1 == 46:
-                                c2: i32 = Memory.read_i8(name_ptr + 2) as i32
-                                if c2 == 0:
-                                    skip = true
-                        if skip == false:
-                            name_len: i64 = Memory.strlen(name_ptr as str)
-                            name_copy: i64 = Memory.malloc(name_len + 1)
-                            if name_copy != 0:
-                                Memory.copy(name_copy, name_ptr, name_len + 1)
-                                result.append(name_copy as str)
-                        pos = pos + (reclen as i64)
-
-        Memory.free(buf)
-        dsl_close(fd)
+                # Linux x86_64 glibc struct dirent places d_name at byte 19.
+                name = (entry + 19) as str
+                is_dot = false
+                if Memory.read_i8(name as i64) == 46 as i8:
+                    second = Memory.read_i8((name as i64) + 1)
+                    if second == 0 as i8:
+                        is_dot = true
+                    elif second == 46 as i8 and Memory.read_i8((name as i64) + 2) == 0 as i8:
+                        is_dot = true
+                if not is_dot:
+                    result.append(Str.strcpy(name))
+        closedir(directory)
         return result

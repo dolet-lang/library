@@ -1,40 +1,52 @@
-# ============================================================================
-# Alloc - Heap allocation (Linux — mmap-based, NO libc)
-# ============================================================================
+requires platform/linux/libc
 
-requires platform/linux/syscalls
-
-# ----------------------------------------------------------------------
-# Scope-arena state (Linux). Real Linux threading is not yet implemented
-# (Thread.spawn returns handle==0 -> serial mode), so a single shared
-# state block is correct here — there are no worker threads to race it.
-# A futex/TLS-backed per-thread block lands with real clone() threads.
-# Layout matches Windows: +0 base, +8 cursor, +16 capacity.
-# ----------------------------------------------------------------------
-g_arena_state_blk: i64 = 0
+g_alloc_malloc_count: i64 = 0
+g_alloc_free_count: i64 = 0
+g_alloc_malloc_bytes: i64 = 0
+g_alloc_free_bytes: i64 = 0
 
 attach Memory:
     static fun arena_state() -> i64:
-        if g_arena_state_blk == 0:
-            g_arena_state_blk = dsl_calloc(1, 24)
-        return g_arena_state_blk
+        return __dolet_linux_arena_state()
 
-attach Memory:
-    # Allocate uninitialized memory
     static fun malloc(size: i64) -> ptr:
-        result: i64 = dsl_malloc(size)
+        result: i64 = malloc(size)
+        g_alloc_malloc_count = g_alloc_malloc_count + 1
+        g_alloc_malloc_bytes = g_alloc_malloc_bytes + size
         return result as ptr
 
-    # Allocate zero-initialized memory
     static fun malloc_zeroed(size: i64) -> i64:
-        return dsl_calloc(1, size)
+        result: i64 = calloc(1, size)
+        g_alloc_malloc_count = g_alloc_malloc_count + 1
+        g_alloc_malloc_bytes = g_alloc_malloc_bytes + size
+        return result
 
-    # Reallocate memory block
     static fun realloc(mem_ptr: i64, new_size: i64) -> i64:
-        return dsl_realloc(mem_ptr, new_size)
+        if mem_ptr == 0:
+            g_alloc_malloc_count = g_alloc_malloc_count + 1
+            g_alloc_malloc_bytes = g_alloc_malloc_bytes + new_size
+        return realloc(mem_ptr, new_size)
 
-    # Free allocated memory
     static fun free(mem_ptr: i64):
         if mem_ptr == 0:
             return
-        dsl_free(mem_ptr)
+        free(mem_ptr)
+        g_alloc_free_count = g_alloc_free_count + 1
+
+    static fun malloc_count() -> i64:
+        return g_alloc_malloc_count
+
+    static fun free_count() -> i64:
+        return g_alloc_free_count
+
+    static fun alloc_balance() -> i64:
+        return g_alloc_malloc_count - g_alloc_free_count
+
+    static fun malloc_bytes() -> i64:
+        return g_alloc_malloc_bytes
+
+    static fun free_bytes() -> i64:
+        return g_alloc_free_bytes
+
+    static fun bytes_held() -> i64:
+        return g_alloc_malloc_bytes - g_alloc_free_bytes

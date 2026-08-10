@@ -1,0 +1,3 @@
+# Linux raw APIs are opt-in and exist only for Linux targets.
+module platform/linux/mod as sys.linux
+module platform/linux/libc as sys.linux.libc

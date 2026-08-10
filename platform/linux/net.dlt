@@ -1,73 +1,32 @@
-# ============================================================================
-# NetOps - Low-level network operations using raw syscalls (Linux, NO libc)
-# Matches Windows NetOps API signatures
-# ============================================================================
+requires platform/linux/libc
 
 struct NetOps:
-    static wsa_initialized: i32 = 0
-
-    # ========== Initialization ==========
-
-    # No-op on Linux (Winsock init not needed), but matches Windows API
     static fun net_init() -> i32:
-        NetOps.wsa_initialized = 1
         return 0
 
-    # ========== Socket Creation ==========
-
-    # Create a TCP socket
-    # Returns: socket fd as i64, or -1 on failure
     static fun net_socket_create() -> i64:
-        # AF_INET=2, SOCK_STREAM=1, protocol=0
-        fd: i32 = dsl_socket(2, 1, 0)
-        return fd as i64
+        return socket(2, 1, 6) as i64
 
-    # ========== Socket Binding ==========
-
-    # Bind socket to address and port
     static fun net_socket_bind(sock: i64, host: str, port: i32) -> i32:
-        sa: i64 = Memory.malloc(16)
-        if sa == 0:
-            return -1
-        Memory.zero(sa, 16)
-        # sin_family = AF_INET (2)
-        Memory.write_i16(sa, 2 as i16)
-        # sin_port (network byte order)
-        port_n: i32 = dsl_htons(port)
-        Memory.write_i16(sa + 2, port_n as i16)
-        # sin_addr — INADDR_ANY = 0
-        Memory.write_i32(sa + 4, 0)
-        result: i32 = dsl_bind(sock as i32, sa, 16)
-        Memory.free(sa)
-        return result
-
-    # ========== Socket Listening ==========
+        address: i64 = Memory.malloc_zeroed(16)
+        Memory.write_i16(address, 2 as i16)
+        Memory.write_i16(address + 2, htons(port as i16))
+        Memory.write_i32(address + 4, inet_addr(host))
+        rc: i32 = bind(sock as i32, address, 16)
+        Memory.free(address)
+        return rc
 
     static fun net_socket_listen(sock: i64, backlog: i32) -> i32:
-        return dsl_listen(sock as i32, backlog)
+        return listen(sock as i32, backlog)
 
-    # ========== Socket Accept ==========
-
-    # Returns: client socket as i64, or -1 on failure
     static fun net_socket_accept(sock: i64) -> i64:
-        fd: i32 = dsl_accept(sock as i32, 0, 0)
-        return fd as i64
+        return accept(sock as i32, 0, 0) as i64
 
-    # ========== Socket Send ==========
-
-    # Send data over socket
     static fun net_socket_send(sock: i64, data: str) -> i32:
-        data_len: i64 = Memory.strlen(data)
-        result: i64 = dsl_send(sock as i32, data as i64, data_len, 0)
-        return result as i32
-
-    # ========== Socket Receive ==========
+        return send(sock as i32, data as i64, Memory.strlen(data), 0) as i32
 
     static fun net_socket_recv(sock: i64, buffer: i64, size: i32) -> i32:
-        result: i64 = dsl_recv(sock as i32, buffer, size as i64, 0)
-        return result as i32
-
-    # ========== Socket Close ==========
+        return recv(sock as i32, buffer, size as i64, 0) as i32
 
     static fun net_socket_close(sock: i64) -> i32:
-        return dsl_close(sock as i32)
+        return close(sock as i32)

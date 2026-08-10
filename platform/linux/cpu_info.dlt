@@ -1,0 +1,9 @@
+requires platform/linux/libc
+
+struct CpuInfo:
+    static fun cpu_count() -> i32:
+        # _SC_NPROCESSORS_ONLN on Linux/glibc.
+        count: i64 = sysconf(84)
+        if count < 1:
+            return 1
+        return count as i32

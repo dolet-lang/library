@@ -1,88 +1,91 @@
-# ============================================================================
-# Args - Command Line Arguments (Linux — /proc/self/cmdline, NO libc)
-# Matches Windows Args API
-# ============================================================================
+requires platform/linux/libc
+
+fun __linux_read_cmdline() -> i64:
+    fd: i32 = open("/proc/self/cmdline", 0, 0)
+    if fd < 0:
+        return 0
+    capacity: i64 = 4096
+    length: i64 = 0
+    block: i64 = Memory.malloc(capacity + 8)
+    if block == 0:
+        close(fd)
+        return 0
+    buffer: i64 = block + 8
+    reading: bool = true
+    got: i64 = 0
+    grown: i64 = 0
+    while reading:
+        if length + 2048 + 1 > capacity:
+            capacity = capacity * 2
+            grown = Memory.realloc(block, capacity + 8)
+            if grown == 0:
+                close(fd)
+                Memory.free(block)
+                return 0
+            block = grown
+            buffer = block + 8
+        got = read(fd, buffer + length, capacity - length - 1)
+        if got <= 0:
+            reading = false
+        else:
+            length = length + got
+    close(fd)
+    Memory.write_i8(buffer + length, 0 as i8)
+    Memory.write_i64(block, length)
+    return block
 
 struct Args:
-    # Get the full raw command line string
     static fun get_raw() -> str:
-        fd: i32 = dsl_open("/proc/self/cmdline", 0, 0)
-        if fd < 0:
+        block: i64 = __linux_read_cmdline()
+        if block == 0:
             return ""
-        buf: i64 = Memory.malloc(4096)
-        total: i64 = dsl_read(fd, buf, 4095)
-        dsl_close(fd)
-        if total <= 0:
-            Memory.free(buf)
-            return ""
-        # /proc/self/cmdline uses \0 separators — replace with spaces
+        length: i64 = Memory.read_i64(block)
+        source: i64 = block + 8
+        result: i64 = Memory.malloc(length + 1)
+        Memory.copy(result, source, length)
         i: i64 = 0
-        while i < total - 1:
-            b: i8 = Memory.read_i8(buf + i)
-            if b == 0:
-                Memory.write_i8(buf + i, 32 as i8)
+        while i + 1 < length:
+            if Memory.read_i8(result + i) == 0 as i8:
+                Memory.write_i8(result + i, 32 as i8)
             i = i + 1
-        Memory.write_i8(buf + total, 0 as i8)
-        return buf as str
+        Memory.write_i8(result + length, 0 as i8)
+        Memory.free(block)
+        return result as str
 
-    # Count the number of arguments
     static fun count() -> i32:
-        fd: i32 = dsl_open("/proc/self/cmdline", 0, 0)
-        if fd < 0:
+        block: i64 = __linux_read_cmdline()
+        if block == 0:
             return 0
-        buf: i64 = Memory.malloc(4096)
-        total: i64 = dsl_read(fd, buf, 4095)
-        dsl_close(fd)
+        total: i64 = Memory.read_i64(block)
+        buffer: i64 = block + 8
         if total <= 0:
-            Memory.free(buf)
+            Memory.free(block)
             return 0
-        n: i32 = 0
+        count: i32 = 0
         i: i64 = 0
         while i < total:
-            b: i8 = Memory.read_i8(buf + i)
-            if b == 0:
-                n = n + 1
+            if Memory.read_i8(buffer + i) == 0 as i8:
+                count = count + 1
             i = i + 1
-        Memory.free(buf)
-        return n
+        Memory.free(block)
+        return count
 
-    # Get argument at index (0 = program name)
-    # Returns "" if out of bounds
     static fun get(index: i32) -> str:
-        fd: i32 = dsl_open("/proc/self/cmdline", 0, 0)
-        if fd < 0:
+        if index < 0:
             return ""
-        buf: i64 = Memory.malloc(4096)
-        total: i64 = dsl_read(fd, buf, 4095)
-        dsl_close(fd)
-        if total <= 0:
-            Memory.free(buf)
+        block: i64 = __linux_read_cmdline()
+        if block == 0:
             return ""
-        Memory.write_i8(buf + total, 0 as i8)
-        n: i32 = 0
-        i: i64 = 0
-        while i < total:
-            if n == index:
-                # Found the argument — measure its length
-                arg_start: i64 = i
-                while i < total:
-                    b: i8 = Memory.read_i8(buf + i)
-                    if b == 0:
-                        break
-                    i = i + 1
-                arg_len: i64 = i - arg_start
-                result: i64 = Memory.malloc(arg_len + 1)
-                Memory.copy(result, buf + arg_start, arg_len)
-                Memory.write_i8(result + arg_len, 0 as i8)
-                Memory.free(buf)
-                return result as str
-            # Skip to next \0
-            while i < total:
-                b: i8 = Memory.read_i8(buf + i)
-                if b == 0:
-                    break
-                i = i + 1
-            i = i + 1
-            n = n + 1
-        Memory.free(buf)
-        return ""
+        total: i64 = Memory.read_i64(block)
+        buffer: i64 = block + 8
+        current: i32 = 0
+        cursor: i64 = 0
+        while current < index and cursor < total:
+            cursor = cursor + Memory.strlen((buffer + cursor) as str) + 1
+            current = current + 1
+        if cursor >= total:
+            Memory.free(block)
+            return ""
+        result: str = Str.strcpy((buffer + cursor) as str)
+        Memory.free(block)
+        return result

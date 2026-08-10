@@ -10,3 +10,14 @@ struct PlatformInfo:
     # Matches the directory name under library/platform/.
     static fun name() -> str:
         return "windows"
+
+    # Host identity used only to select a runnable host-tool bundle.
+    static fun host_id() -> str:
+        return "windows-x86_64"
+
+    # Default output target for this compiler build.
+    static fun default_target() -> str:
+        return "windows/x86_64-msvc"
+
+    static fun path_separator() -> str:
+        return "\\"

@@ -1,7 +1,7 @@
 module sys.windows
 load platform/windows/kernel32
 load platform/windows/alloc
-load platform/windows/format
+load platform/common/format
 load platform/windows/io
 load platform/windows/file
 load platform/windows/path
@@ -11,9 +11,10 @@ load platform/windows/info
 load platform/windows/cpu_info
 load platform/windows/dir
 load platform/windows/time
+load platform/windows/net
 
 # Selective import mappings for this platform
-expose platform/windows/format as format
+expose platform/common/format as format
 expose platform/windows/alloc as alloc
 expose platform/windows/kernel32 as kernel
 expose platform/windows/file as file
@@ -54,3 +55,4 @@ export TlsSetValue
 export GetSystemInfo
 export GetActiveProcessorCount
 export CpuInfo
+export NetOps
