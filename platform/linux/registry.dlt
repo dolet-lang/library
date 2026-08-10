@@ -1,3 +1,5 @@
 # Linux raw APIs are opt-in and exist only for Linux targets.
 module platform/linux/mod as sys.linux
 module platform/linux/libc as sys.linux.libc
+module platform/linux/x11 as sys.linux.x11
+module platform/linux/vulkan_surface as sys.linux.vulkan_surface

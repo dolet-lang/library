@@ -1,0 +1,22 @@
+# Vulkan/Xlib presentation ABI for Linux desktop targets.
+# Core Vulkan commands stay in the vulkan package; this platform module owns
+# only the native surface bridge used by window implementations.
+
+VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR: i32 = 1000004000
+VK_SUCCESS: i32 = 0
+
+# Exact x86_64 SysV layout of VkXlibSurfaceCreateInfoKHR (40 bytes).
+# Explicit padding keeps the Dolet declaration independent of implicit
+# aggregate-padding behavior.
+struct VkXlibSurfaceCreateInfoKHR:
+    sType: i32 = 1000004000
+    padding1: i32 = 0
+    pNext: i64 = 0
+    flags: i32 = 0
+    padding2: i32 = 0
+    display: i64 = 0
+    window: i64 = 0
+
+extern lib "vulkan":
+    fun vkCreateXlibSurfaceKHR(instance: i64, create_info: i64, allocator: i64, surface_out: i64) -> i32
+    fun vkDestroySurfaceKHR(instance: i64, surface: i64, allocator: i64)

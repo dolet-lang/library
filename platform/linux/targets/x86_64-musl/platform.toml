@@ -1,0 +1,44 @@
+schema = 2
+id = "linux/x86_64-musl"
+os = "linux"
+arch = "x86_64"
+abi = "musl"
+module_root = "platform/linux"
+registry = "platform/linux/registry.dlt"
+resource_root = "platform/linux/targets/x86_64-musl/resources"
+
+[capabilities]
+required = "memory,file,dir,path,args,process,time,thread,mutex,park,tls,network"
+optional = "static-runtime"
+
+[toolchain]
+toolchain_id = "llvm"
+toolchain_version = "1"
+translate_role = "translate"
+compile_role = "compile"
+link_role = "link_elf"
+obj_ext = ".o"
+exe_ext = ""
+target_triple = "x86_64-unknown-linux-musl"
+
+[link]
+# This target is self-contained: its startup objects and musl runtime are
+# target-owned resources, so Windows hosts do not need a Linux installation.
+default_libs = "c"
+runtime_helpers = "runtime_helpers.o"
+pre_objects = "crt1.o, crti.o"
+post_objects = "crtn.o"
+link_options = "-static -m elf_x86_64"
+stack_size = ""
+entry = ""
+
+[link.flags]
+output = "-o {path}"
+libpath = "-L{path}"
+defaultlib = "-l{name}"
+subsystem_console = ""
+subsystem_gui = ""
+flag_entry = ""
+stack = ""
+deterministic = "--build-id=none"
+link_target = ""
