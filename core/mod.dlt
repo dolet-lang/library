@@ -14,6 +14,11 @@ load core/random/random
 load core/integers
 load core/floats
 load core/primitives
+# Pure floating-point transcendental implementations. LLVM may legalize
+# intrinsics such as @sin/@cos/@exp into libc-style symbol names even when no
+# C runtime is selected; keeping these definitions in core satisfies those
+# symbols with Dolet code on every platform.
+load core/math
 
 # Exported symbols
 export Memory
@@ -45,3 +50,4 @@ export Bool
 export Char
 export Pointer
 export StrType
+export Math
