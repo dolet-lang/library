@@ -1,4 +1,4 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
 struct Output:
     code: i32
@@ -12,47 +12,13 @@ fun __linux_wait_code(status: i32) -> i32:
     return 128 + signal
 
 fun __linux_capture(command: str) -> Output:
-    merged_command: str = Str.concat(command, " 2>&1")
-    stream: i64 = popen(merged_command, "r")
-    if stream == 0:
-        return Output(code=-1, stdout="", stderr="")
-    capacity: i64 = 4096
-    length: i64 = 0
-    output: i64 = Memory.malloc(capacity)
-    chunk: i64 = Memory.malloc(4096)
-    if output == 0 or chunk == 0:
-        if output != 0:
-            Memory.free(output)
-        if chunk != 0:
-            Memory.free(chunk)
-        pclose(stream)
-        return Output(code=-1, stdout="", stderr="")
-    reading: bool = true
-    got: i64 = 0
-    grown: i64 = 0
-    while reading:
-        got = fread(chunk, 1, 4096, stream)
-        if got == 0:
-            reading = false
-        else:
-            while length + got + 1 > capacity:
-                capacity = capacity * 2
-            grown = Memory.realloc(output, capacity)
-            if grown == 0:
-                Memory.free(output)
-                Memory.free(chunk)
-                pclose(stream)
-                return Output(code=-1, stdout="", stderr="")
-            output = grown
-            Memory.copy(output + length, chunk, got)
-            length = length + got
-    Memory.write_i8(output + length, 0 as i8)
-    Memory.free(chunk)
-    status: i32 = pclose(stream)
-    code: i32 = status
-    if status >= 0:
-        code = __linux_wait_code(status)
-    return Output(code=code, stdout=output as str, stderr="")
+    # Keep one syscall-native capture engine. The former popen/fread path
+    # silently pulled a C runtime into every program importing std.
+    captured: Output = __linux_output(command)
+    if Memory.strlen(captured.stderr) == 0:
+        return captured
+    merged: str = Str.concat(captured.stdout, captured.stderr)
+    return Output(code=captured.code, stdout=merged, stderr="")
 
 fun __linux_output(command: str) -> Output:
     out_pipe: i64 = Memory.malloc_zeroed(8)

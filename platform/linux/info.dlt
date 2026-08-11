@@ -6,7 +6,7 @@ struct PlatformInfo:
         return "linux-x86_64"
 
     static fun default_target() -> str:
-        return "linux/x86_64-gnu"
+        return "linux/x86_64"
 
     static fun path_separator() -> str:
         return "/"

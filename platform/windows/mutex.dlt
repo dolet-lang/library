@@ -2,7 +2,7 @@ requires platform/windows/kernel32
 # ============================================================================
 # Mutex — exclusive lock for shared mutable state.
 #
-# Built on Win32 CRITICAL_SECTION (Linux: pthread_mutex, future). The OS
+# Built on Win32 CRITICAL_SECTION (Linux uses a futex-backed implementation). The OS
 # stores 40 bytes of internal state in a buffer that MUST stay at a
 # stable address — `@heap struct Mutex` ensures the storage pointer
 # never moves once `Mutex.new()` returns.

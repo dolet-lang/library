@@ -1,31 +1,48 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
 struct Dir:
     static fun list(path: str) -> list<str>:
         result: list<str> = []
-        directory: i64 = opendir(path)
-        if directory == 0:
+        directory: i32 = open(path, 65536, 0)
+        if directory < 0:
+            return result
+        buffer_size: i64 = 32768
+        buffer: i64 = Memory.malloc(buffer_size)
+        if buffer == 0:
+            close(directory)
             return result
         scanning: bool = true
+        received: i64 = 0
+        cursor: i64 = 0
         entry: i64 = 0
+        record_size: i64 = 0
         name: str = ""
         is_dot: bool = false
         second: i8 = 0 as i8
         while scanning:
-            entry = readdir(directory)
-            if entry == 0:
+            received = getdents64(directory, buffer, buffer_size)
+            if received <= 0:
                 scanning = false
             else:
-                # Linux x86_64 glibc struct dirent places d_name at byte 19.
-                name = (entry + 19) as str
-                is_dot = false
-                if Memory.read_i8(name as i64) == 46 as i8:
-                    second = Memory.read_i8((name as i64) + 1)
-                    if second == 0 as i8:
-                        is_dot = true
-                    elif second == 46 as i8 and Memory.read_i8((name as i64) + 2) == 0 as i8:
-                        is_dot = true
-                if not is_dot:
-                    result.append(Str.strcpy(name))
-        closedir(directory)
+                cursor = 0
+                while cursor < received:
+                    entry = buffer + cursor
+                    record_size = Memory.read_i16(entry + 16) as i64
+                    if record_size < 20 or cursor + record_size > received:
+                        cursor = received
+                    else:
+                        # linux_dirent64 is a kernel ABI: d_name begins at 19.
+                        name = (entry + 19) as str
+                        is_dot = false
+                        if Memory.read_i8(name as i64) == 46 as i8:
+                            second = Memory.read_i8((name as i64) + 1)
+                            if second == 0 as i8:
+                                is_dot = true
+                            elif second == 46 as i8 and Memory.read_i8((name as i64) + 2) == 0 as i8:
+                                is_dot = true
+                        if not is_dot:
+                            result.append(Str.strcpy(name))
+                        cursor = cursor + record_size
+        Memory.free(buffer)
+        close(directory)
         return result

@@ -1,5 +1,5 @@
 module sys.linux
-load platform/linux/libc
+load platform/linux/kernel
 load platform/linux/alloc
 load platform/common/format
 load platform/linux/io
@@ -15,7 +15,7 @@ load platform/linux/net
 
 expose platform/common/format as format
 expose platform/linux/alloc as alloc
-expose platform/linux/libc as kernel
+expose platform/linux/kernel as kernel
 expose platform/linux/file as file
 expose platform/linux/path as path
 

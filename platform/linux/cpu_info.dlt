@@ -1,9 +1,51 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
 struct CpuInfo:
     static fun cpu_count() -> i32:
-        # _SC_NPROCESSORS_ONLN on Linux/glibc.
-        count: i64 = sysconf(84)
-        if count < 1:
+        # Kernel-owned online CPU list, for example "0-15" or "0-3,8-11".
+        fd: i32 = open("/sys/devices/system/cpu/online", 0, 0)
+        if fd < 0:
             return 1
-        return count as i32
+        buffer: i64 = Memory.malloc_zeroed(256)
+        if buffer == 0:
+            close(fd)
+            return 1
+        length: i64 = read(fd, buffer, 255)
+        close(fd)
+        if length <= 0:
+            Memory.free(buffer)
+            return 1
+        total: i32 = 0
+        range_start: i32 = 0
+        current: i32 = 0
+        in_range: bool = false
+        have_number: bool = false
+        index: i64 = 0
+        ch: i32 = 0
+        while index <= length:
+            ch = 44
+            if index < length:
+                ch = Memory.read_i8(buffer + index) as i32
+            if ch >= 48 and ch <= 57:
+                current = current * 10 + (ch - 48)
+                have_number = true
+            elif ch == 45:
+                range_start = current
+                current = 0
+                in_range = true
+                have_number = false
+            elif ch == 44 or ch == 10:
+                if have_number:
+                    if in_range:
+                        total = total + (current - range_start + 1)
+                    else:
+                        total = total + 1
+                current = 0
+                range_start = 0
+                in_range = false
+                have_number = false
+            index = index + 1
+        Memory.free(buffer)
+        if total < 1:
+            return 1
+        return total

@@ -17,7 +17,7 @@ struct PlatformInfo:
 
     # Default output target for this compiler build.
     static fun default_target() -> str:
-        return "windows/x86_64-msvc"
+        return "windows/x86_64"
 
     static fun path_separator() -> str:
         return "\\"

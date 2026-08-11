@@ -1,52 +1,173 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
-g_alloc_malloc_count: i64 = 0
-g_alloc_free_count: i64 = 0
-g_alloc_malloc_bytes: i64 = 0
-g_alloc_free_bytes: i64 = 0
+# Pure Dolet process heap.
+#
+# Small allocations are carved from 1 MiB mmap chunks and recycled through a
+# process-wide free list. Large allocations keep their own mapping and return
+# it directly to the kernel. The helper exposes only stable zeroed state
+# storage; all allocator policy lives here in Dolet.
+LINUX_HEAP_CHUNK_SIZE: i64 = 1048576
+LINUX_HEAP_LARGE_LIMIT: i64 = 65536
+LINUX_HEAP_HEADER_SIZE: i64 = 32
+
+# Heap-state layout (owned by the target runtime helper):
+#   0 lock, 8 free_head, 16 cursor, 24 remaining,
+#   32 malloc_count, 40 free_count, 48 malloc_bytes, 56 free_bytes.
+# Statistics share the same stable state and use atomic operations so
+# allocator diagnostics remain correct when many Dolet threads allocate.
+
+@noarena
+fun __linux_heap_lock(state: i64):
+    acquired: bool = false
+    while not acquired:
+        acquired = __atomic_cas_i32(state, 0, 1)
+        if not acquired:
+            __linux_futex(state, 0, 1, 0)
+
+@noarena
+fun __linux_heap_unlock(state: i64):
+    __atomic_store_i32(state, 0)
+    __linux_futex(state, 1, 1, 0)
+
+@noarena
+fun __linux_align16(value: i64) -> i64:
+    return (value + 15) & -16
 
 attach Memory:
     static fun arena_state() -> i64:
         return __dolet_linux_arena_state()
 
     static fun malloc(size: i64) -> ptr:
-        result: i64 = malloc(size)
-        g_alloc_malloc_count = g_alloc_malloc_count + 1
-        g_alloc_malloc_bytes = g_alloc_malloc_bytes + size
-        return result as ptr
+        if size <= 0:
+            return null
+        payload_size: i64 = __linux_align16(size)
+        block_size: i64 = payload_size + LINUX_HEAP_HEADER_SIZE
+
+        # Dedicated mappings avoid polluting the small-object chunks and can
+        # be returned to the kernel immediately on free.
+        if block_size >= LINUX_HEAP_LARGE_LIMIT:
+            mapping_size: i64 = (block_size + 4095) & -4096
+            large_base: i64 = __linux_mmap(0, mapping_size, 3, 34, -1, 0)
+            if large_base < 0:
+                return null
+            Memory.write_i64(large_base, payload_size)
+            Memory.write_i64(large_base + 8, mapping_size)
+            Memory.write_i64(large_base + 16, size)
+            Memory.write_i64(large_base + 24, 0)
+            large_state: i64 = __dolet_linux_heap_state()
+            __atomic_fetch_add_i64(large_state + 32, 1 as i64)
+            __atomic_fetch_add_i64(large_state + 48, size)
+            return (large_base + LINUX_HEAP_HEADER_SIZE) as ptr
+
+        state: i64 = __dolet_linux_heap_state()
+        __linux_heap_lock(state)
+
+        # State: lock@0, free_head@8, cursor@16, remaining@24.
+        previous: i64 = 0
+        block: i64 = Memory.read_i64(state + 8)
+        capacity: i64 = 0
+        next: i64 = 0
+        while block != 0:
+            capacity = Memory.read_i64(block)
+            next = Memory.read_i64(block + 8)
+            if capacity >= payload_size:
+                if previous == 0:
+                    Memory.write_i64(state + 8, next)
+                else:
+                    Memory.write_i64(previous + 8, next)
+                Memory.write_i64(block + 8, 0)
+                Memory.write_i64(block + 16, size)
+                __linux_heap_unlock(state)
+                __atomic_fetch_add_i64(state + 32, 1 as i64)
+                __atomic_fetch_add_i64(state + 48, size)
+                return (block + LINUX_HEAP_HEADER_SIZE) as ptr
+            previous = block
+            block = next
+
+        cursor: i64 = Memory.read_i64(state + 16)
+        remaining: i64 = Memory.read_i64(state + 24)
+        if remaining < block_size:
+            cursor = __linux_mmap(0, LINUX_HEAP_CHUNK_SIZE, 3, 34, -1, 0)
+            if cursor < 0:
+                __linux_heap_unlock(state)
+                return null
+            remaining = LINUX_HEAP_CHUNK_SIZE
+
+        block = cursor
+        Memory.write_i64(block, payload_size)
+        Memory.write_i64(block + 8, 0)
+        Memory.write_i64(block + 16, size)
+        Memory.write_i64(block + 24, 0)
+        cursor = cursor + block_size
+        remaining = remaining - block_size
+        Memory.write_i64(state + 16, cursor)
+        Memory.write_i64(state + 24, remaining)
+        __linux_heap_unlock(state)
+
+        __atomic_fetch_add_i64(state + 32, 1 as i64)
+        __atomic_fetch_add_i64(state + 48, size)
+        return (block + LINUX_HEAP_HEADER_SIZE) as ptr
 
     static fun malloc_zeroed(size: i64) -> i64:
-        result: i64 = calloc(1, size)
-        g_alloc_malloc_count = g_alloc_malloc_count + 1
-        g_alloc_malloc_bytes = g_alloc_malloc_bytes + size
+        result: i64 = Memory.malloc(size) as i64
+        if result != 0:
+            Memory.zero(result, size)
         return result
 
     static fun realloc(mem_ptr: i64, new_size: i64) -> i64:
         if mem_ptr == 0:
-            g_alloc_malloc_count = g_alloc_malloc_count + 1
-            g_alloc_malloc_bytes = g_alloc_malloc_bytes + new_size
-        return realloc(mem_ptr, new_size)
+            return Memory.malloc(new_size) as i64
+        if new_size <= 0:
+            Memory.free(mem_ptr)
+            return 0
+        old_capacity: i64 = Memory.read_i64(mem_ptr - LINUX_HEAP_HEADER_SIZE)
+        if new_size <= old_capacity:
+            return mem_ptr
+        replacement: i64 = Memory.malloc(new_size) as i64
+        if replacement == 0:
+            return 0
+        Memory.copy(replacement, mem_ptr, old_capacity)
+        Memory.free(mem_ptr)
+        return replacement
 
     static fun free(mem_ptr: i64):
         if mem_ptr == 0:
             return
-        free(mem_ptr)
-        g_alloc_free_count = g_alloc_free_count + 1
+        block: i64 = mem_ptr - LINUX_HEAP_HEADER_SIZE
+        capacity: i64 = Memory.read_i64(block)
+        mapping_size: i64 = Memory.read_i64(block + 8)
+        requested_size: i64 = Memory.read_i64(block + 16)
+        state: i64 = __dolet_linux_heap_state()
+        __atomic_fetch_add_i64(state + 40, 1 as i64)
+        __atomic_fetch_add_i64(state + 56, requested_size)
+        if mapping_size != 0:
+            __linux_munmap(block, mapping_size)
+            return
+        __linux_heap_lock(state)
+        Memory.write_i64(block + 8, Memory.read_i64(state + 8))
+        Memory.write_i64(state + 8, block)
+        __linux_heap_unlock(state)
 
     static fun malloc_count() -> i64:
-        return g_alloc_malloc_count
+        state: i64 = __dolet_linux_heap_state()
+        return __atomic_load_i64(state + 32)
 
     static fun free_count() -> i64:
-        return g_alloc_free_count
+        state: i64 = __dolet_linux_heap_state()
+        return __atomic_load_i64(state + 40)
 
     static fun alloc_balance() -> i64:
-        return g_alloc_malloc_count - g_alloc_free_count
+        state: i64 = __dolet_linux_heap_state()
+        return __atomic_load_i64(state + 32) - __atomic_load_i64(state + 40)
 
     static fun malloc_bytes() -> i64:
-        return g_alloc_malloc_bytes
+        state: i64 = __dolet_linux_heap_state()
+        return __atomic_load_i64(state + 48)
 
     static fun free_bytes() -> i64:
-        return g_alloc_free_bytes
+        state: i64 = __dolet_linux_heap_state()
+        return __atomic_load_i64(state + 56)
 
     static fun bytes_held() -> i64:
-        return g_alloc_malloc_bytes - g_alloc_free_bytes
+        state: i64 = __dolet_linux_heap_state()
+        return __atomic_load_i64(state + 48) - __atomic_load_i64(state + 56)

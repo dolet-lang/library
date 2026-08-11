@@ -1,4 +1,4 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
 struct NetOps:
     static fun net_init() -> i32:

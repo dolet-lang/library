@@ -1,4 +1,4 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
 struct FileOps:
     static fun file_delete(path: str) -> i32:

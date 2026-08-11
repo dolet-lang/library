@@ -1,4 +1,4 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
 fun __linux_read_cmdline() -> i64:
     fd: i32 = open("/proc/self/cmdline", 0, 0)

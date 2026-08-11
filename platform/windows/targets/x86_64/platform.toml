@@ -1,15 +1,18 @@
-schema = 2
-id = "windows/x86_64-msvc"
+schema = 3
+id = "windows/x86_64"
 os = "windows"
 arch = "x86_64"
-abi = "msvc"
+abi = "win64"
+runtime = "dolet"
+object_format = "coff"
+executable_format = "pe"
 module_root = "platform/windows"
 registry = "platform/windows/registry.dlt"
 resource_root = "platform/windows/resources"
 
 [capabilities]
 required = "memory,file,dir,path,args,process,time,thread,mutex,park,tls,network"
-optional = "win32,vulkan-surface"
+optional = "win32,vulkan-surface,desktop-vulkan"
 
 [toolchain]
 toolchain_id = "llvm"
@@ -19,9 +22,10 @@ compile_role = "compile"
 link_role = "link_coff"
 obj_ext = ".obj"
 exe_ext = ".exe"
-target_triple = "x86_64-pc-windows-msvc"
 
 [link]
+# Dolet owns its runtime. These are Windows system import libraries, not a C
+# runtime; pure Dolet math and memory code require no msvcrt/UCRT dependency.
 default_libs = "kernel32, ws2_32"
 runtime_helpers = "runtime_helpers.obj"
 stack_size = 8388608

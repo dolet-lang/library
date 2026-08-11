@@ -1,6 +1,8 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
-LINUX_MUTEX_STORAGE: i64 = 64
+# A four-byte futex word is the entire mutex state. The uncontended path is
+# one cmpxchg; the kernel is entered only after contention.
+LINUX_MUTEX_STORAGE: i64 = 4
 
 @heap
 struct Mutex:
@@ -8,25 +10,27 @@ struct Mutex:
 
 attach Mutex:
     static fun new() -> Mutex:
-        state: i64 = Memory.malloc_zeroed(LINUX_MUTEX_STORAGE)
-        rc: i32 = pthread_mutex_init(state, 0)
-        if rc != 0:
-            Memory.free(state)
-            return Mutex(state=0)
-        return Mutex(state=state)
+        return Mutex(state=Memory.malloc_zeroed(LINUX_MUTEX_STORAGE))
 
     fun lock(self):
-        if self.state != 0:
-            pthread_mutex_lock(self.state)
+        if self.state == 0:
+            return
+        acquired: bool = false
+        while not acquired:
+            acquired = __atomic_cas_i32(self.state, 0, 1)
+            if not acquired:
+                __linux_futex(self.state, 0, 1, 0)
 
     fun unlock(self):
-        if self.state != 0:
-            pthread_mutex_unlock(self.state)
+        if self.state == 0:
+            return
+        __atomic_store_i32(self.state, 0)
+        __linux_futex(self.state, 1, 1, 0)
 
     fun try_lock(self) -> bool:
         if self.state == 0:
             return false
-        return pthread_mutex_trylock(self.state) == 0
+        return __atomic_cas_i32(self.state, 0, 1)
 
     fun with(self, body: @heap fun()):
         self.lock()
@@ -35,6 +39,5 @@ attach Mutex:
 
     fun destroy(self):
         if self.state != 0:
-            pthread_mutex_destroy(self.state)
             Memory.free(self.state)
             self.state = 0

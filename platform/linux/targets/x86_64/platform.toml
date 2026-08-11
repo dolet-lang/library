@@ -1,0 +1,47 @@
+schema = 3
+id = "linux/x86_64"
+os = "linux"
+arch = "x86_64"
+abi = "sysv"
+runtime = "dolet"
+object_format = "elf"
+executable_format = "elf"
+module_root = "platform/linux"
+registry = "platform/linux/registry.dlt"
+resource_root = "platform/linux/targets/x86_64/resources"
+
+[capabilities]
+required = "memory,file,dir,path,args,process,time,thread,mutex,park,tls,network"
+optional = "linux-syscall,x11,vulkan-surface,desktop-vulkan"
+
+[toolchain]
+toolchain_id = "llvm"
+toolchain_version = "1"
+translate_role = "translate"
+compile_role = "compile"
+link_role = "link_elf"
+obj_ext = ".o"
+exe_ext = ""
+
+[link]
+# No CRT and no C runtime. `dolet-runtime` is a logical boundary satisfied by
+# the target-owned helper object below; it is never translated to `-l...`.
+provided_libs = "dolet-runtime"
+default_libs = ""
+runtime_helpers = "runtime_helpers.o"
+pre_objects = ""
+post_objects = ""
+link_options = "-static -m elf_x86_64"
+stack_size = ""
+entry = "_start"
+
+[link.flags]
+output = "-o {path}"
+libpath = "-L{path}"
+defaultlib = "-l{name}"
+subsystem_console = ""
+subsystem_gui = ""
+flag_entry = "-e {name}"
+stack = ""
+deterministic = "--build-id=none"
+link_target = ""

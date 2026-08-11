@@ -1,4 +1,4 @@
-requires platform/linux/libc
+requires platform/linux/kernel
 
 fun __thread_entry(env: i64) -> i64:
     closure: @heap fun() = env as @heap fun()
@@ -6,22 +6,24 @@ fun __thread_entry(env: i64) -> i64:
     return 0
 
 struct Thread:
+    # Base of a target-owned mapping. Offset 0 is the kernel clear-tid word;
+    # offset 8 stores the complete stack/TLS mapping size.
     handle: i64
 
 attach Thread:
     static fun spawn(f: @heap fun()) -> Thread:
-        handle_out: i64 = Memory.malloc_zeroed(8)
-        rc: i32 = pthread_create(handle_out, 0, __thread_entry as i64, f as i64)
-        if rc != 0:
-            Memory.free(handle_out)
-            return Thread(handle=0)
-        handle: i64 = Memory.read_i64(handle_out)
-        Memory.free(handle_out)
-        return Thread(handle=handle)
+        return Thread(handle=__dolet_thread_spawn(__thread_entry as i64, f as i64))
 
     fun join(self):
-        if self.handle != 0:
-            pthread_join(self.handle, 0)
+        if self.handle == 0:
+            return
+        tid: i32 = __atomic_load_i32(self.handle)
+        while tid != 0:
+            __linux_futex(self.handle, 0, tid, 0)
+            tid = __atomic_load_i32(self.handle)
+        mapping_size: i64 = Memory.read_i64(self.handle + 8)
+        if mapping_size > 0:
+            __linux_munmap(self.handle, mapping_size)
 
     static fun sleep(ms: i32):
         if ms <= 0:
@@ -36,14 +38,11 @@ attach Thread:
         sched_yield()
 
     static fun current_id() -> i32:
-        return pthread_self() as i32
+        return __linux_gettid()
 
-# Manual-reset broadcast event used by std's worker pool. The storage sizes
-# are part of this x86_64-gnu ABI pack and are verified by conformance tests.
-PTHREAD_MUTEX_STORAGE: i64 = 64
-PTHREAD_COND_STORAGE: i64 = 64
-PARK_EVENT_FLAG_OFFSET: i64 = 128
-PARK_EVENT_STORAGE: i64 = 136
+# Manual-reset broadcast event. One atomic word and FUTEX_WAIT/FUTEX_WAKE
+# replace the old pthread mutex+condition allocation.
+PARK_EVENT_STORAGE: i64 = 4
 
 @heap
 struct ParkEvent:
@@ -51,49 +50,31 @@ struct ParkEvent:
 
 attach ParkEvent:
     static fun new() -> ParkEvent:
-        state: i64 = Memory.malloc_zeroed(PARK_EVENT_STORAGE)
-        pthread_mutex_init(state, 0)
-        pthread_cond_init(state + PTHREAD_MUTEX_STORAGE, 0)
-        return ParkEvent(state=state)
+        return ParkEvent(state=Memory.malloc_zeroed(PARK_EVENT_STORAGE))
 
     fun wait(self, ms: i32):
-        if self.state == 0:
+        if self.state == 0 or __atomic_load_i32(self.state) != 0:
             return
-        mutex: i64 = self.state
-        condition: i64 = self.state + PTHREAD_MUTEX_STORAGE
-        pthread_mutex_lock(mutex)
-        if Memory.read_i32(self.state + PARK_EVENT_FLAG_OFFSET) == 0:
-            deadline: i64 = Memory.malloc_zeroed(16)
-            clock_gettime(0, deadline)
-            sec: i64 = Memory.read_i64(deadline)
-            nanos: i64 = Memory.read_i64(deadline + 8) + ((ms as i64) * 1000000)
-            sec = sec + (nanos / 1000000000)
-            nanos = nanos - ((nanos / 1000000000) * 1000000000)
-            Memory.write_i64(deadline, sec)
-            Memory.write_i64(deadline + 8, nanos)
-            pthread_cond_timedwait(condition, mutex, deadline)
-            Memory.free(deadline)
-        pthread_mutex_unlock(mutex)
+        timeout: i64 = 0
+        if ms >= 0:
+            timeout = Memory.malloc_zeroed(16)
+            Memory.write_i64(timeout, (ms / 1000) as i64)
+            Memory.write_i64(timeout + 8, ((ms - ((ms / 1000) * 1000)) as i64) * 1000000)
+        __linux_futex(self.state, 0, 0, timeout)
+        if timeout != 0:
+            Memory.free(timeout)
 
     fun signal(self):
         if self.state == 0:
             return
-        pthread_mutex_lock(self.state)
-        Memory.write_i32(self.state + PARK_EVENT_FLAG_OFFSET, 1)
-        pthread_cond_broadcast(self.state + PTHREAD_MUTEX_STORAGE)
-        pthread_mutex_unlock(self.state)
+        __atomic_store_i32(self.state, 1)
+        __linux_futex(self.state, 1, 2147483647, 0)
 
     fun reset(self):
-        if self.state == 0:
-            return
-        pthread_mutex_lock(self.state)
-        Memory.write_i32(self.state + PARK_EVENT_FLAG_OFFSET, 0)
-        pthread_mutex_unlock(self.state)
+        if self.state != 0:
+            __atomic_store_i32(self.state, 0)
 
     fun destroy(self):
-        if self.state == 0:
-            return
-        pthread_cond_destroy(self.state + PTHREAD_MUTEX_STORAGE)
-        pthread_mutex_destroy(self.state)
-        Memory.free(self.state)
-        self.state = 0
+        if self.state != 0:
+            Memory.free(self.state)
+            self.state = 0

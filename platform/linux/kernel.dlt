@@ -1,0 +1,266 @@
+# Linux x86_64 kernel boundary for the Pure Dolet runtime.
+#
+# All policy and data handling remain Dolet code. The target-owned runtime
+# helper supplies only the architecture syscall instruction and the tiny
+# process/thread entry trampolines that cannot be expressed portably.
+
+extern lib "dolet-runtime":
+    fun __dolet_syscall6(number: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64) -> i64
+    fun __dolet_linux_arena_state() -> i64
+    fun __dolet_linux_heap_state() -> i64
+    fun __dolet_thread_spawn(entry: i64, argument: i64) -> i64
+
+@noarena
+fun __linux_syscall0(number: i64) -> i64:
+    return __dolet_syscall6(number, 0, 0, 0, 0, 0, 0)
+
+@noarena
+fun __linux_syscall1(number: i64, a1: i64) -> i64:
+    return __dolet_syscall6(number, a1, 0, 0, 0, 0, 0)
+
+@noarena
+fun __linux_syscall2(number: i64, a1: i64, a2: i64) -> i64:
+    return __dolet_syscall6(number, a1, a2, 0, 0, 0, 0)
+
+@noarena
+fun __linux_syscall3(number: i64, a1: i64, a2: i64, a3: i64) -> i64:
+    return __dolet_syscall6(number, a1, a2, a3, 0, 0, 0)
+
+@noarena
+fun __linux_syscall4(number: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64:
+    return __dolet_syscall6(number, a1, a2, a3, a4, 0, 0)
+
+@noarena
+fun __linux_syscall5(number: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64) -> i64:
+    return __dolet_syscall6(number, a1, a2, a3, a4, a5, 0)
+
+@noarena
+fun __linux_mmap(address: i64, size: i64, protection: i64, flags: i64, fd: i64, offset: i64) -> i64:
+    return __dolet_syscall6(9, address, size, protection, flags, fd, offset)
+
+@noarena
+fun __linux_munmap(address: i64, size: i64) -> i32:
+    return __linux_syscall2(11, address, size) as i32
+
+@noarena
+fun __linux_futex(address: i64, operation: i32, value: i32, timeout: i64) -> i32:
+    return __dolet_syscall6(202, address, operation as i64, value as i64, timeout, 0, 0) as i32
+
+@noarena
+fun __linux_gettid() -> i32:
+    return __linux_syscall0(186) as i32
+
+@noarena
+fun open(path: str, flags: i32, mode: i32) -> i32:
+    return __linux_syscall4(257, -100, path as i64, flags as i64, mode as i64) as i32
+
+@noarena
+fun close(fd: i32) -> i32:
+    return __linux_syscall1(3, fd as i64) as i32
+
+@noarena
+fun read(fd: i32, buffer: i64, count: i64) -> i64:
+    return __linux_syscall3(0, fd as i64, buffer, count)
+
+@noarena
+fun getdents64(fd: i32, buffer: i64, count: i64) -> i64:
+    return __linux_syscall3(217, fd as i64, buffer, count)
+
+@noarena
+fun write(fd: i32, buffer: i64, count: i64) -> i64:
+    return __linux_syscall3(1, fd as i64, buffer, count)
+
+@noarena
+fun lseek(fd: i32, offset: i64, whence: i32) -> i64:
+    return __linux_syscall3(8, fd as i64, offset, whence as i64)
+
+@noarena
+fun unlink(path: str) -> i32:
+    return __linux_syscall1(87, path as i64) as i32
+
+@noarena
+fun access(path: str, mode: i32) -> i32:
+    return __linux_syscall2(21, path as i64, mode as i64) as i32
+
+@noarena
+fun getcwd(buffer: i64, size: i64) -> i64:
+    actual_buffer: i64 = buffer
+    actual_size: i64 = size
+    if actual_buffer == 0:
+        actual_size = 4096
+        actual_buffer = Memory.malloc(actual_size)
+    if actual_buffer == 0:
+        return 0
+    result: i64 = __linux_syscall2(79, actual_buffer, actual_size)
+    if result < 0:
+        if buffer == 0:
+            Memory.free(actual_buffer)
+        return 0
+    return actual_buffer
+
+@noarena
+fun readlink(path: str, buffer: i64, size: i64) -> i64:
+    return __linux_syscall3(89, path as i64, buffer, size)
+
+# Pure lexical absolute-path resolution. Linux's kernel intentionally has no
+# realpath syscall; canonical filesystem traversal is library policy.
+@noarena
+fun realpath(path: str, resolved: i64) -> i64:
+    path_len: i64 = Memory.strlen(path)
+    if path_len == 0:
+        return 0
+    output: i64 = resolved
+    if Memory.read_i8(path as i64) == 47 as i8:
+        if output == 0:
+            output = Memory.malloc(path_len + 1)
+        if output == 0:
+            return 0
+        Memory.copy(output, path as i64, path_len + 1)
+        return output
+    cwd: i64 = getcwd(0, 0)
+    if cwd == 0:
+        return 0
+    cwd_len: i64 = Memory.strlen(cwd as str)
+    total: i64 = cwd_len + 1 + path_len
+    if output == 0:
+        output = Memory.malloc(total + 1)
+    if output == 0:
+        Memory.free(cwd)
+        return 0
+    Memory.copy(output, cwd, cwd_len)
+    Memory.write_i8(output + cwd_len, 47 as i8)
+    Memory.copy(output + cwd_len + 1, path as i64, path_len)
+    Memory.write_i8(output + total, 0 as i8)
+    Memory.free(cwd)
+    return output
+
+@noarena
+fun pipe(descriptors: i64) -> i32:
+    return __linux_syscall1(22, descriptors) as i32
+
+@noarena
+fun fork() -> i32:
+    return __linux_syscall0(57) as i32
+
+@noarena
+fun dup2(old_fd: i32, new_fd: i32) -> i32:
+    return __linux_syscall2(33, old_fd as i64, new_fd as i64) as i32
+
+@noarena
+fun execv(path: str, arguments: i64) -> i32:
+    return __linux_syscall3(59, path as i64, arguments, 0) as i32
+
+@noarena
+fun _exit(code: i32):
+    __linux_syscall1(60, code as i64)
+
+@noarena
+fun exit(code: i32):
+    __linux_syscall1(231, code as i64)
+
+@noarena
+fun waitpid(pid: i32, status: i64, options: i32) -> i32:
+    return __linux_syscall4(61, pid as i64, status, options as i64, 0) as i32
+
+@noarena
+fun poll(descriptors: i64, count: i64, timeout_ms: i32) -> i32:
+    return __linux_syscall3(7, descriptors, count, timeout_ms as i64) as i32
+
+@noarena
+fun system(command: str) -> i32:
+    pid: i32 = fork()
+    if pid == 0:
+        arguments: i64 = Memory.malloc_zeroed(32)
+        if arguments == 0:
+            _exit(127)
+        Memory.write_i64(arguments, "sh" as i64)
+        Memory.write_i64(arguments + 8, "-c" as i64)
+        Memory.write_i64(arguments + 16, command as i64)
+        execv("/bin/sh", arguments)
+        _exit(127)
+    if pid < 0:
+        return -1
+    status: i64 = Memory.malloc_zeroed(8)
+    if status == 0:
+        return -1
+    waitpid(pid, status, 0)
+    result: i32 = Memory.read_i32(status)
+    Memory.free(status)
+    return result
+
+@noarena
+fun clock_gettime(clock_id: i32, timespec: i64) -> i32:
+    return __linux_syscall2(228, clock_id as i64, timespec) as i32
+
+@noarena
+fun nanosleep(request: i64, remaining: i64) -> i32:
+    return __linux_syscall2(35, request, remaining) as i32
+
+@noarena
+fun sched_yield() -> i32:
+    return __linux_syscall0(24) as i32
+
+@noarena
+fun socket(domain: i32, socket_type: i32, protocol: i32) -> i32:
+    return __linux_syscall3(41, domain as i64, socket_type as i64, protocol as i64) as i32
+
+@noarena
+fun bind(fd: i32, address: i64, length: i32) -> i32:
+    return __linux_syscall3(49, fd as i64, address, length as i64) as i32
+
+@noarena
+fun listen(fd: i32, backlog: i32) -> i32:
+    return __linux_syscall2(50, fd as i64, backlog as i64) as i32
+
+@noarena
+fun accept(fd: i32, address: i64, length: i64) -> i32:
+    return __linux_syscall3(43, fd as i64, address, length) as i32
+
+@noarena
+fun connect(fd: i32, address: i64, length: i32) -> i32:
+    return __linux_syscall3(42, fd as i64, address, length as i64) as i32
+
+@noarena
+fun send(fd: i32, buffer: i64, length: i64, flags: i32) -> i64:
+    return __dolet_syscall6(44, fd as i64, buffer, length, flags as i64, 0, 0)
+
+@noarena
+fun recv(fd: i32, buffer: i64, length: i64, flags: i32) -> i64:
+    return __dolet_syscall6(45, fd as i64, buffer, length, flags as i64, 0, 0)
+
+@noarena
+fun setsockopt(fd: i32, level: i32, name: i32, value: i64, length: i32) -> i32:
+    return __linux_syscall5(54, fd as i64, level as i64, name as i64, value, length as i64) as i32
+
+@noarena
+fun htons(value: i16) -> i16:
+    raw: i32 = value as i32
+    return (((raw & 255) << 8) | ((raw >> 8) & 255)) as i16
+
+@noarena
+fun inet_addr(address: str) -> i32:
+    result: i32 = 0
+    part: i32 = 0
+    shift: i32 = 0
+    index: i64 = 0
+    length: i64 = Memory.strlen(address)
+    while index <= length:
+        ch: i32 = 46
+        if index < length:
+            ch = Memory.read_i8((address as i64) + index) as i32
+        if ch >= 48 and ch <= 57:
+            part = part * 10 + (ch - 48)
+            if part > 255:
+                return -1
+        elif ch == 46:
+            if shift > 24:
+                return -1
+            result = result | (part << shift)
+            shift = shift + 8
+            part = 0
+        else:
+            return -1
+        index = index + 1
+    if shift != 32:
+        return -1
+    return result

@@ -41,6 +41,14 @@ annot noreturn = Annot(
     effect = "llvm:noreturn"
     )
 
+# Runtime/platform leaf: suppresses the automatic scope-arena and debug-frame
+# prologues.  Low-level allocators, syscall shims, and context bootstrap code
+# use this to break allocator -> arena -> allocator recursion without teaching
+# the compiler about any operating-system-specific symbol names.
+annot noarena = Annot(
+    target = fun
+    )
+
 # --- Compiler message annotations ---
 
 annot deprecated = Annot(
