@@ -27,7 +27,11 @@ g_alloc_free_bytes:   i64 = 0
 #   +8  cursor    (i64)
 #   +16 capacity  (i64)
 # ----------------------------------------------------------------------
-g_arena_tls_slot: i32 = 0 - 1   # -1 == not yet allocated
+# Allocate the process-wide slot during the runtime's single-threaded global
+# initialization. The old lazy check allowed two first-use worker threads to
+# both call TlsAlloc and publish different slots, leaking one arena and making
+# later accesses nondeterministic.
+g_arena_tls_slot: i32 = TlsAlloc()
 
 attach Memory:
     # Return this thread's arena-state block, allocating the TLS slot
@@ -37,12 +41,12 @@ attach Memory:
     # compiler's `Memory_` arena-exemption prefix already covers it (no
     # self-recursion through arena bracketing).
     static fun arena_state() -> i64:
-        if g_arena_tls_slot == 0 - 1:
-            # First-ever call (main thread, before any worker spawns
-            # since the arena is exercised during single-threaded
-            # startup). Claim the TLS slot once.
-            g_arena_tls_slot = TlsAlloc()
         slot: i32 = g_arena_tls_slot
+        if slot == 0 - 1:
+            # TLS_OUT_OF_INDEXES: continuing would index an invalid TLS slot
+            # and turn allocation failure into shared-memory corruption.
+            ExitProcess(127)
+            return 0
         blk: i64 = TlsGetValue(slot)
         if blk == 0:
             blk = Memory.malloc_zeroed(24)

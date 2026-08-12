@@ -178,24 +178,53 @@ struct Process:
         # --- Read stdout from pipe ---
         buf_max: i64 = 1048576
         output_buf: i64 = Memory.malloc_zeroed(buf_max + 1)
+        discard_buf: i64 = Memory.malloc(4096)
         total_read: i64 = 0
         bytes_read_ptr: i64 = Memory.malloc_zeroed(4)
         chunk_size: i32 = 4096
+        if output_buf == 0 or discard_buf == 0 or bytes_read_ptr == 0:
+            # Closing the read end makes a verbose child observe a broken pipe
+            # instead of blocking forever after a parent allocation failure.
+            CloseHandle(read_h)
+            h_process_failed: i64 = Memory.read_i64(pi)
+            h_thread_failed: i64 = Memory.read_i64(pi + 8)
+            WaitForSingleObject(h_process_failed, -1)
+            CloseHandle(h_process_failed)
+            CloseHandle(h_thread_failed)
+            if output_buf != 0:
+                Memory.free(output_buf)
+            if discard_buf != 0:
+                Memory.free(discard_buf)
+            if bytes_read_ptr != 0:
+                Memory.free(bytes_read_ptr)
+            Memory.free(sa)
+            Memory.free(read_h_ptr)
+            Memory.free(write_h_ptr)
+            Memory.free(si)
+            Memory.free(pi)
+            return ""
         
         reading: bool = true
         read_ok: i32 = 0
         bytes_read: i32 = 0
         while reading:
             Memory.write_i32(bytes_read_ptr, 0)
-            read_ok = ReadFile(read_h, output_buf + total_read, chunk_size, bytes_read_ptr, 0)
+            destination: i64 = discard_buf
+            to_read: i32 = chunk_size
+            capture: bool = false
+            if total_read < buf_max:
+                if total_read + (to_read as i64) > buf_max:
+                    to_read = (buf_max - total_read) as i32
+                destination = output_buf + total_read
+                capture = true
+            read_ok = ReadFile(read_h, destination, to_read, bytes_read_ptr, 0)
             bytes_read = Memory.read_i32(bytes_read_ptr)
             
             if read_ok == 0 or bytes_read == 0:
                 reading = false
             else:
-                total_read = total_read + (bytes_read as i64)
-                if total_read >= buf_max:
-                    reading = false
+                if capture:
+                    total_read = total_read + (bytes_read as i64)
         
         # Null terminate
         Memory.write_i8(output_buf + total_read, 0 as i8)
@@ -207,7 +236,8 @@ struct Process:
         
         # Copy to right-sized buffer
         result_str: i64 = Memory.malloc_zeroed(total_read + 1)
-        Memory.copy(result_str, output_buf, total_read + 1)
+        if result_str != 0:
+            Memory.copy(result_str, output_buf, total_read + 1)
         
         CloseHandle(h_process)
         CloseHandle(h_thread)
@@ -218,8 +248,11 @@ struct Process:
         Memory.free(si)
         Memory.free(pi)
         Memory.free(output_buf)
+        Memory.free(discard_buf)
         Memory.free(bytes_read_ptr)
 
+        if result_str == 0:
+            return ""
         return result_str as str
 
     # ==========================================================
@@ -248,6 +281,12 @@ struct Process:
         p2_ok: i32 = CreatePipe(err_read_ptr, err_write_ptr, sa, 0)
 
         if p1_ok == 0 or p2_ok == 0:
+            if p1_ok != 0:
+                CloseHandle(Memory.read_i64(out_read_ptr))
+                CloseHandle(Memory.read_i64(out_write_ptr))
+            if p2_ok != 0:
+                CloseHandle(Memory.read_i64(err_read_ptr))
+                CloseHandle(Memory.read_i64(err_write_ptr))
             Memory.free(sa)
             Memory.free(out_read_ptr)
             Memory.free(out_write_ptr)
@@ -309,12 +348,40 @@ struct Process:
         buf_max: i64 = 1048576
         out_buf: i64 = Memory.malloc_zeroed(buf_max + 1)
         err_buf: i64 = Memory.malloc_zeroed(buf_max + 1)
+        discard_buf: i64 = Memory.malloc(4096)
         out_total: i64 = 0
         err_total: i64 = 0
 
         bytes_read_ptr: i64 = Memory.malloc_zeroed(4)
         avail_ptr: i64 = Memory.malloc_zeroed(4)
         chunk: i32 = 4096
+        if out_buf == 0 or err_buf == 0 or discard_buf == 0 or bytes_read_ptr == 0 or avail_ptr == 0:
+            # Drop both read ends, reap the child, and release every successfully
+            # allocated resource. This is the failure-safe equivalent of the
+            # normal concurrent drain path below.
+            CloseHandle(out_read)
+            CloseHandle(err_read)
+            WaitForSingleObject(h_process, -1)
+            CloseHandle(h_process)
+            CloseHandle(h_thread)
+            Memory.free(sa)
+            Memory.free(out_read_ptr)
+            Memory.free(out_write_ptr)
+            Memory.free(err_read_ptr)
+            Memory.free(err_write_ptr)
+            Memory.free(si)
+            Memory.free(pi)
+            if out_buf != 0:
+                Memory.free(out_buf)
+            if err_buf != 0:
+                Memory.free(err_buf)
+            if discard_buf != 0:
+                Memory.free(discard_buf)
+            if bytes_read_ptr != 0:
+                Memory.free(bytes_read_ptr)
+            if avail_ptr != 0:
+                Memory.free(avail_ptr)
+            return Output(code=-1, stdout="", stderr="")
 
         # Concurrent drain loop — peek both pipes, read what's
         # available, sleep briefly when both are empty and the
@@ -331,13 +398,20 @@ struct Process:
             PeekNamedPipe(out_read, 0, 0, 0, avail_ptr, 0)
             out_avail: i32 = Memory.read_i32(avail_ptr)
             if out_avail > 0:
+                to_read1: i32 = chunk
+                if out_avail < to_read1:
+                    to_read1 = out_avail
+                out_destination: i64 = discard_buf
+                capture_out: bool = false
                 if out_total < buf_max:
-                    to_read1: i32 = chunk
-                    if (out_total + (chunk as i64)) > buf_max:
+                    if out_total + (to_read1 as i64) > buf_max:
                         to_read1 = (buf_max - out_total) as i32
-                    Memory.write_i32(bytes_read_ptr, 0)
-                    ReadFile(out_read, out_buf + out_total, to_read1, bytes_read_ptr, 0)
-                    br1: i32 = Memory.read_i32(bytes_read_ptr)
+                    out_destination = out_buf + out_total
+                    capture_out = true
+                Memory.write_i32(bytes_read_ptr, 0)
+                ReadFile(out_read, out_destination, to_read1, bytes_read_ptr, 0)
+                br1: i32 = Memory.read_i32(bytes_read_ptr)
+                if capture_out:
                     out_total = out_total + (br1 as i64)
 
             # Peek + read stderr
@@ -345,13 +419,20 @@ struct Process:
             PeekNamedPipe(err_read, 0, 0, 0, avail_ptr, 0)
             err_avail: i32 = Memory.read_i32(avail_ptr)
             if err_avail > 0:
+                to_read2: i32 = chunk
+                if err_avail < to_read2:
+                    to_read2 = err_avail
+                err_destination: i64 = discard_buf
+                capture_err: bool = false
                 if err_total < buf_max:
-                    to_read2: i32 = chunk
-                    if (err_total + (chunk as i64)) > buf_max:
+                    if err_total + (to_read2 as i64) > buf_max:
                         to_read2 = (buf_max - err_total) as i32
-                    Memory.write_i32(bytes_read_ptr, 0)
-                    ReadFile(err_read, err_buf + err_total, to_read2, bytes_read_ptr, 0)
-                    br2: i32 = Memory.read_i32(bytes_read_ptr)
+                    err_destination = err_buf + err_total
+                    capture_err = true
+                Memory.write_i32(bytes_read_ptr, 0)
+                ReadFile(err_read, err_destination, to_read2, bytes_read_ptr, 0)
+                br2: i32 = Memory.read_i32(bytes_read_ptr)
+                if capture_err:
                     err_total = err_total + (br2 as i64)
 
             if proc_done == 1 and out_avail == 0 and err_avail == 0:
@@ -365,32 +446,64 @@ struct Process:
         draining_out: bool = true
         while draining_out:
             Memory.write_i32(bytes_read_ptr, 0)
-            d1_ok: i32 = ReadFile(out_read, out_buf + out_total, chunk, bytes_read_ptr, 0)
+            d1_destination: i64 = discard_buf
+            d1_size: i32 = chunk
+            d1_capture: bool = false
+            if out_total < buf_max:
+                if out_total + (d1_size as i64) > buf_max:
+                    d1_size = (buf_max - out_total) as i32
+                d1_destination = out_buf + out_total
+                d1_capture = true
+            d1_ok: i32 = ReadFile(out_read, d1_destination, d1_size, bytes_read_ptr, 0)
             d1_n: i32 = Memory.read_i32(bytes_read_ptr)
             if d1_ok == 0 or d1_n == 0:
                 draining_out = false
             else:
-                out_total = out_total + (d1_n as i64)
-                if out_total >= buf_max:
-                    draining_out = false
+                if d1_capture:
+                    out_total = out_total + (d1_n as i64)
 
         draining_err: bool = true
         while draining_err:
             Memory.write_i32(bytes_read_ptr, 0)
-            d2_ok: i32 = ReadFile(err_read, err_buf + err_total, chunk, bytes_read_ptr, 0)
+            d2_destination: i64 = discard_buf
+            d2_size: i32 = chunk
+            d2_capture: bool = false
+            if err_total < buf_max:
+                if err_total + (d2_size as i64) > buf_max:
+                    d2_size = (buf_max - err_total) as i32
+                d2_destination = err_buf + err_total
+                d2_capture = true
+            d2_ok: i32 = ReadFile(err_read, d2_destination, d2_size, bytes_read_ptr, 0)
             d2_n: i32 = Memory.read_i32(bytes_read_ptr)
             if d2_ok == 0 or d2_n == 0:
                 draining_err = false
             else:
-                err_total = err_total + (d2_n as i64)
-                if err_total >= buf_max:
-                    draining_err = false
+                if d2_capture:
+                    err_total = err_total + (d2_n as i64)
 
         Memory.write_i8(out_buf + out_total, 0 as i8)
         Memory.write_i8(err_buf + err_total, 0 as i8)
 
         # Exit code
         exit_ptr: i64 = Memory.malloc_zeroed(4)
+        if exit_ptr == 0:
+            CloseHandle(h_process)
+            CloseHandle(h_thread)
+            CloseHandle(out_read)
+            CloseHandle(err_read)
+            Memory.free(sa)
+            Memory.free(out_read_ptr)
+            Memory.free(out_write_ptr)
+            Memory.free(err_read_ptr)
+            Memory.free(err_write_ptr)
+            Memory.free(si)
+            Memory.free(pi)
+            Memory.free(out_buf)
+            Memory.free(err_buf)
+            Memory.free(discard_buf)
+            Memory.free(bytes_read_ptr)
+            Memory.free(avail_ptr)
+            return Output(code=-1, stdout="", stderr="")
         GetExitCodeProcess(h_process, exit_ptr)
         exit_code: i32 = Memory.read_i32(exit_ptr)
 
@@ -415,6 +528,7 @@ struct Process:
         Memory.free(pi)
         Memory.free(out_buf)
         Memory.free(err_buf)
+        Memory.free(discard_buf)
         Memory.free(bytes_read_ptr)
         Memory.free(avail_ptr)
         Memory.free(exit_ptr)

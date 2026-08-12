@@ -8,6 +8,7 @@ load platform/windows/path
 load platform/windows/args
 load platform/windows/process
 load platform/windows/info
+load platform/windows/host
 load platform/windows/cpu_info
 load platform/windows/dir
 load platform/windows/time
@@ -56,3 +57,4 @@ export GetSystemInfo
 export GetActiveProcessorCount
 export CpuInfo
 export NetOps
+export PlatformHost

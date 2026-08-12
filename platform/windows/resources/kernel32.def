@@ -34,8 +34,10 @@ EXPORTS
     CreateDirectoryA
     RemoveDirectoryA
     GetFileAttributesA
+    SetFileAttributesA
     SetCurrentDirectoryA
     MoveFileA
+    MoveFileExA
     CopyFileA
     FindFirstFileA
     FindNextFileA

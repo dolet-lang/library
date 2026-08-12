@@ -1,0 +1,195 @@
+requires platform/linux/kernel
+
+# Linux implementation of the portable host-tool facade. It stays syscall
+# native and does not pull libc into console tools.
+struct PlatformHost:
+    static fun executable_suffix() -> str:
+        return ""
+
+    static fun path_list_separator() -> i32:
+        return 58  # ':'
+
+    static fun paths_are_case_sensitive() -> bool:
+        return true
+
+    static fun get_environment(name: str) -> str:
+        # The kernel exposes the current process environment as NUL-delimited
+        # bytes. Reading it avoids a libc getenv dependency in pure tools.
+        descriptor: i32 = open("/proc/self/environ", 0, 0)
+        if descriptor < 0:
+            return ""
+        capacity: i64 = 131072
+        buffer: i64 = Memory.malloc(capacity)
+        if buffer == 0:
+            close(descriptor)
+            return ""
+        length: i64 = read(descriptor, buffer, capacity - 1)
+        close(descriptor)
+        if length <= 0:
+            Memory.free(buffer)
+            return ""
+        Memory.write_i8(buffer + length, 0 as i8)
+        name_length: i64 = Memory.strlen(name)
+        cursor: i64 = 0
+        entry_start: i64 = 0
+        entry_length: i64 = 0
+        matches: bool = false
+        index: i64 = 0
+        while cursor < length:
+            entry_start = cursor
+            while cursor < length and Memory.read_i8(buffer + cursor) != 0 as i8:
+                cursor = cursor + 1
+            entry_length = cursor - entry_start
+            if entry_length > name_length and Memory.read_i8(buffer + entry_start + name_length) == 61 as i8:
+                matches = true
+                index = 0
+                while index < name_length:
+                    if Memory.read_i8(buffer + entry_start + index) != Memory.read_i8((name as i64) + index):
+                        matches = false
+                        index = name_length
+                    else:
+                        index = index + 1
+                if matches:
+                    value_length: i64 = entry_length - name_length - 1
+                    value: i64 = Memory.malloc(value_length + 1)
+                    if value == 0:
+                        Memory.free(buffer)
+                        return ""
+                    Memory.copy(value, buffer + entry_start + name_length + 1, value_length)
+                    Memory.write_i8(value + value_length, 0 as i8)
+                    Memory.free(buffer)
+                    return value as str
+            cursor = cursor + 1
+        Memory.free(buffer)
+        return ""
+
+    static fun stat_mode(path: str, no_follow: i32) -> i32:
+        stat_buffer: i64 = Memory.malloc_zeroed(144)
+        if stat_buffer == 0:
+            return -1
+        flags: i32 = 0
+        if no_follow != 0:
+            flags = 256  # AT_SYMLINK_NOFOLLOW
+        result: i32 = newfstatat(-100, path, stat_buffer, flags)
+        mode: i32 = -1
+        if result == 0:
+            mode = Memory.read_i32(stat_buffer + 24)
+        Memory.free(stat_buffer)
+        return mode
+
+    static fun is_directory(path: str) -> i32:
+        mode: i32 = PlatformHost.stat_mode(path, 0)
+        if mode >= 0 and (mode & 61440) == 16384:
+            return 1
+        return 0
+
+    static fun is_link(path: str) -> i32:
+        mode: i32 = PlatformHost.stat_mode(path, 1)
+        if mode >= 0 and (mode & 61440) == 40960:
+            return 1
+        return 0
+
+    static fun file_stamp(path: str) -> i64:
+        stat_buffer: i64 = Memory.malloc_zeroed(144)
+        if stat_buffer == 0:
+            return 0
+        if newfstatat(-100, path, stat_buffer, 0) != 0:
+            Memory.free(stat_buffer)
+            return 0
+        seconds: i64 = Memory.read_i64(stat_buffer + 88)
+        nanoseconds: i64 = Memory.read_i64(stat_buffer + 96)
+        Memory.free(stat_buffer)
+        return seconds * 1000000000 + nanoseconds
+
+    static fun create_directory(path: str) -> i32:
+        if PlatformHost.is_directory(path) == 1:
+            return 1
+        if mkdirat(-100, path, 493) == 0:  # 0755
+            return 1
+        return PlatformHost.is_directory(path)
+
+    static fun remove_directory(path: str) -> i32:
+        if unlinkat(-100, path, 512) == 0:  # AT_REMOVEDIR
+            return 1
+        return 0
+
+    static fun remove_file(path: str) -> i32:
+        if unlinkat(-100, path, 0) == 0:
+            return 1
+        return 0
+
+    static fun remove_link(path: str) -> i32:
+        if unlinkat(-100, path, 0) == 0:
+            return 1
+        return 0
+
+    static fun copy_file(source: str, destination: str) -> i32:
+        source_handle: i64 = FileOps.file_open_read(source)
+        if FileOps.file_is_valid(source_handle) == false:
+            return 0
+        destination_handle: i64 = FileOps.file_open_write(destination)
+        if FileOps.file_is_valid(destination_handle) == false:
+            FileOps.file_close(source_handle)
+            return 0
+        buffer: i64 = Memory.malloc(65536)
+        if buffer == 0:
+            FileOps.file_close(source_handle)
+            FileOps.file_close(destination_handle)
+            return 0
+        ok: i32 = 1
+        reading: bool = true
+        received: i32 = 0
+        written: i32 = 0
+        write_offset: i32 = 0
+        while reading:
+            received = FileOps.file_read(source_handle, buffer, 65536)
+            if received < 0:
+                ok = 0
+                reading = false
+            elif received == 0:
+                reading = false
+            else:
+                # write(2) is allowed to consume fewer bytes than requested.
+                # Keep advancing through this read buffer until it is complete;
+                # treating a short write as a hard failure can silently truncate
+                # large package assets on a busy filesystem.
+                write_offset = 0
+                while write_offset < received:
+                    written = FileOps.file_write(destination_handle, buffer + (write_offset as i64), received - write_offset)
+                    if written <= 0:
+                        ok = 0
+                        reading = false
+                        write_offset = received
+                    else:
+                        write_offset = write_offset + written
+        Memory.free(buffer)
+        FileOps.file_close(source_handle)
+        FileOps.file_close(destination_handle)
+        return ok
+
+    static fun move_path(source: str, destination: str) -> i32:
+        if renameat(-100, source, -100, destination) == 0:
+            return 1
+        return 0
+
+    static fun acquire_process_lock(path: str) -> i64:
+        # flock is associated with the open file description, so process
+        # termination cannot leave a stale lock behind.
+        descriptor: i32 = open(path, 66, 384)  # O_RDWR | O_CREAT, 0600
+        if descriptor < 0:
+            return 0
+        if flock(descriptor, 2) != 0:  # LOCK_EX
+            close(descriptor)
+            return 0
+        return (descriptor as i64) + 1
+
+    static fun release_process_lock(handle: i64):
+        if handle > 0:
+            descriptor: i32 = (handle - 1) as i32
+            flock(descriptor, 8)  # LOCK_UN
+            close(descriptor)
+
+    static fun change_directory(path: str) -> i32:
+        if chdir(path) == 0:
+            return 1
+        return 0

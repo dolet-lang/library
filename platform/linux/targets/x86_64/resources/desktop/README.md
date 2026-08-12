@@ -5,7 +5,9 @@ This directory is the target-owned link boundary for graphical
 source declares X11 or Vulkan; applications still use the single public
 `linux/x86_64` target.
 
-- `entry_helpers.o` preserves ELF-loader TLS and provides the syscall gateway.
+- `entry_helpers.o` preserves ELF-loader TLS, enters through
+  `__libc_start_main` (so libc/pthread initialization and finalization follow
+  the System V ABI), and provides the syscall gateway.
 - `runtime_helpers.o` supplies Dolet arena/heap state and opaque pthread-backed
   thread handles for loader-compatible desktop threads.
 - `libX11.so`, `libvulkan.so`, `libpthread.so`, and `libc.so` are link-time SDK inputs.

@@ -24,8 +24,18 @@ fun __linux_output(command: str) -> Output:
     out_pipe: i64 = Memory.malloc_zeroed(8)
     err_pipe: i64 = Memory.malloc_zeroed(8)
     if out_pipe == 0 or err_pipe == 0:
+        if out_pipe != 0:
+            Memory.free(out_pipe)
+        if err_pipe != 0:
+            Memory.free(err_pipe)
         return Output(code=-1, stdout="", stderr="")
-    if pipe(out_pipe) != 0 or pipe(err_pipe) != 0:
+    if pipe(out_pipe) != 0:
+        Memory.free(out_pipe)
+        Memory.free(err_pipe)
+        return Output(code=-1, stdout="", stderr="")
+    if pipe(err_pipe) != 0:
+        close(Memory.read_i32(out_pipe))
+        close(Memory.read_i32(out_pipe + 4))
         Memory.free(out_pipe)
         Memory.free(err_pipe)
         return Output(code=-1, stdout="", stderr="")
@@ -61,14 +71,31 @@ fun __linux_output(command: str) -> Output:
         close(err_read)
         return Output(code=-1, stdout="", stderr="")
 
-    out_capacity: i64 = 4096
-    err_capacity: i64 = 4096
+    # Match Windows: retain at most 1 MiB from each stream, but keep draining
+    # everything. A hard read stop lets a verbose child fill its pipe and
+    # deadlock forever; unbounded realloc lets hostile output exhaust memory.
+    capture_limit: i64 = 1048576
     out_length: i64 = 0
     err_length: i64 = 0
-    out_buffer: i64 = Memory.malloc(out_capacity)
-    err_buffer: i64 = Memory.malloc(err_capacity)
+    out_buffer: i64 = Memory.malloc_zeroed(capture_limit + 1)
+    err_buffer: i64 = Memory.malloc_zeroed(capture_limit + 1)
     chunk: i64 = Memory.malloc(4096)
     pollfds: i64 = Memory.malloc_zeroed(16)
+    if out_buffer == 0 or err_buffer == 0 or chunk == 0 or pollfds == 0:
+        # Closing both read ends guarantees a verbose child cannot remain
+        # blocked on a full pipe while we reap it after an allocation failure.
+        close(out_read)
+        close(err_read)
+        waitpid(pid, 0, 0)
+        if out_buffer != 0:
+            Memory.free(out_buffer)
+        if err_buffer != 0:
+            Memory.free(err_buffer)
+        if chunk != 0:
+            Memory.free(chunk)
+        if pollfds != 0:
+            Memory.free(pollfds)
+        return Output(code=-1, stdout="", stderr="")
     out_open: bool = true
     err_open: bool = true
     poll_result: i32 = 0
@@ -76,8 +103,8 @@ fun __linux_output(command: str) -> Output:
     err_events: i16 = 0 as i16
     got_out: i64 = 0
     got_err: i64 = 0
-    grown_out: i64 = 0
-    grown_err: i64 = 0
+    copy_out: i64 = 0
+    copy_err: i64 = 0
 
     while out_open or err_open:
         if out_open:
@@ -103,36 +130,35 @@ fun __linux_output(command: str) -> Output:
                     close(out_read)
                     out_open = false
                 else:
-                    while out_length + got_out + 1 > out_capacity:
-                        out_capacity = out_capacity * 2
-                    grown_out = Memory.realloc(out_buffer, out_capacity)
-                    if grown_out == 0:
-                        close(out_read)
-                        out_open = false
-                    else:
-                        out_buffer = grown_out
-                        Memory.copy(out_buffer + out_length, chunk, got_out)
-                        out_length = out_length + got_out
+                    copy_out = got_out
+                    if out_length + copy_out > capture_limit:
+                        copy_out = capture_limit - out_length
+                    if copy_out > 0:
+                        Memory.copy(out_buffer + out_length, chunk, copy_out)
+                        out_length = out_length + copy_out
             if err_open and err_events != 0 as i16:
                 got_err = read(err_read, chunk, 4096)
                 if got_err <= 0:
                     close(err_read)
                     err_open = false
                 else:
-                    while err_length + got_err + 1 > err_capacity:
-                        err_capacity = err_capacity * 2
-                    grown_err = Memory.realloc(err_buffer, err_capacity)
-                    if grown_err == 0:
-                        close(err_read)
-                        err_open = false
-                    else:
-                        err_buffer = grown_err
-                        Memory.copy(err_buffer + err_length, chunk, got_err)
-                        err_length = err_length + got_err
+                    copy_err = got_err
+                    if err_length + copy_err > capture_limit:
+                        copy_err = capture_limit - err_length
+                    if copy_err > 0:
+                        Memory.copy(err_buffer + err_length, chunk, copy_err)
+                        err_length = err_length + copy_err
 
     Memory.write_i8(out_buffer + out_length, 0 as i8)
     Memory.write_i8(err_buffer + err_length, 0 as i8)
     status_ptr: i64 = Memory.malloc_zeroed(4)
+    if status_ptr == 0:
+        waitpid(pid, 0, 0)
+        Memory.free(out_buffer)
+        Memory.free(err_buffer)
+        Memory.free(chunk)
+        Memory.free(pollfds)
+        return Output(code=-1, stdout="", stderr="")
     waitpid(pid, status_ptr, 0)
     status: i32 = Memory.read_i32(status_ptr)
     code: i32 = __linux_wait_code(status)

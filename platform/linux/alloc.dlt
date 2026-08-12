@@ -71,10 +71,26 @@ attach Memory:
             capacity = Memory.read_i64(block)
             next = Memory.read_i64(block + 8)
             if capacity >= payload_size:
-                if previous == 0:
-                    Memory.write_i64(state + 8, next)
+                # Split a significantly larger free block. This keeps repeated
+                # mixed-size workloads from consuming an entire old block for
+                # one small allocation and steadily growing the heap.
+                remainder_capacity: i64 = capacity - payload_size - LINUX_HEAP_HEADER_SIZE
+                if remainder_capacity >= 16:
+                    remainder: i64 = block + LINUX_HEAP_HEADER_SIZE + payload_size
+                    Memory.write_i64(remainder, remainder_capacity)
+                    Memory.write_i64(remainder + 8, next)
+                    Memory.write_i64(remainder + 16, 0)
+                    Memory.write_i64(remainder + 24, 0)
+                    if previous == 0:
+                        Memory.write_i64(state + 8, remainder)
+                    else:
+                        Memory.write_i64(previous + 8, remainder)
+                    Memory.write_i64(block, payload_size)
                 else:
-                    Memory.write_i64(previous + 8, next)
+                    if previous == 0:
+                        Memory.write_i64(state + 8, next)
+                    else:
+                        Memory.write_i64(previous + 8, next)
                 Memory.write_i64(block + 8, 0)
                 Memory.write_i64(block + 16, size)
                 __linux_heap_unlock(state)
@@ -144,8 +160,31 @@ attach Memory:
             __linux_munmap(block, mapping_size)
             return
         __linux_heap_lock(state)
-        Memory.write_i64(block + 8, Memory.read_i64(state + 8))
-        Memory.write_i64(state + 8, block)
+        # Keep the free list address-sorted so adjacent blocks can be merged.
+        # Coalescing plus splitting bounds fragmentation without a C allocator.
+        previous: i64 = 0
+        next: i64 = Memory.read_i64(state + 8)
+        while next != 0 and next < block:
+            previous = next
+            next = Memory.read_i64(next + 8)
+        Memory.write_i64(block + 8, next)
+        Memory.write_i64(block + 16, 0)
+        if previous == 0:
+            Memory.write_i64(state + 8, block)
+        else:
+            Memory.write_i64(previous + 8, block)
+
+        block_capacity: i64 = Memory.read_i64(block)
+        if next != 0 and block + LINUX_HEAP_HEADER_SIZE + block_capacity == next:
+            next_capacity: i64 = Memory.read_i64(next)
+            Memory.write_i64(block, block_capacity + LINUX_HEAP_HEADER_SIZE + next_capacity)
+            Memory.write_i64(block + 8, Memory.read_i64(next + 8))
+            block_capacity = Memory.read_i64(block)
+        if previous != 0:
+            previous_capacity: i64 = Memory.read_i64(previous)
+            if previous + LINUX_HEAP_HEADER_SIZE + previous_capacity == block:
+                Memory.write_i64(previous, previous_capacity + LINUX_HEAP_HEADER_SIZE + block_capacity)
+                Memory.write_i64(previous + 8, Memory.read_i64(block + 8))
         __linux_heap_unlock(state)
 
     static fun malloc_count() -> i64:

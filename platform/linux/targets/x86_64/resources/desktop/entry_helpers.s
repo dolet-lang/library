@@ -11,11 +11,16 @@
     .type _start,@function
 _start:
     xorl %ebp, %ebp
+    movq %rdx, %r9           /* rtld_fini from the ELF loader */
+    popq %rsi                /* argc */
+    movq %rsp, %rdx          /* argv */
     andq $-16, %rsp
-    call main
-    movl %eax, %edi
-    movq $231, %rax          /* exit_group */
-    syscall
+    pushq %rax               /* preserve ABI stack alignment */
+    pushq %rsp               /* stack_end */
+    xorl %r8d, %r8d          /* fini: init arrays are loader-owned */
+    xorl %ecx, %ecx          /* init */
+    leaq main(%rip), %rdi
+    call __libc_start_main@PLT
     hlt
     .size _start, .-_start
 

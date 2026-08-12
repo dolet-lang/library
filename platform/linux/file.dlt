@@ -1,22 +1,30 @@
 requires platform/linux/kernel
 
 struct FileOps:
+    # The platform-neutral FileOps contract uses one invalid-handle sentinel.
+    # Raw Linux syscalls return -errno, so normalize every open failure here
+    # instead of leaking OS-specific error encodings into callers.
+    static fun normalize_open_result(handle: i32) -> i64:
+        if handle < 0:
+            return -1
+        return handle as i64
+
     static fun file_delete(path: str) -> i32:
         if unlink(path) == 0:
             return 1
         return 0
 
     static fun file_open_read(path: str) -> i64:
-        return open(path, 0, 0) as i64
+        return FileOps.normalize_open_result(open(path, 0, 0))
 
     static fun file_open_write(path: str) -> i64:
-        return open(path, 577, 438) as i64
+        return FileOps.normalize_open_result(open(path, 577, 438))
 
     static fun file_open_append(path: str) -> i64:
-        return open(path, 1089, 438) as i64
+        return FileOps.normalize_open_result(open(path, 1089, 438))
 
     static fun file_open_rw(path: str) -> i64:
-        return open(path, 66, 438) as i64
+        return FileOps.normalize_open_result(open(path, 66, 438))
 
     static fun file_close(handle: i64):
         if handle >= 0:

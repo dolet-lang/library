@@ -11,13 +11,50 @@
 # LLVM lowers silicon functions (@sin, @cos, etc.) to calls to these.
 # By defining them here in pure Dolet, we eliminate msvcrt dependency.
 
+# IEEE-754 edge values are produced by hardware floating-point operations.
+# Keeping these helpers in Dolet avoids CRT symbols and preserves normal
+# NaN/Infinity propagation at the public math boundary.
+fun math_nan_f32() -> f32:
+    negative_one: f32 = 0.0 - 1.0
+    return @sqrt(negative_one)
+
+fun math_nan_f64() -> f64:
+    negative_one: f64 = 0.0 - 1.0
+    return @sqrt(negative_one)
+
+fun math_pos_inf_f32() -> f32:
+    one: f32 = 1.0
+    zero: f32 = 0.0
+    return one / zero
+
+fun math_pos_inf_f64() -> f64:
+    one: f64 = 1.0
+    zero: f64 = 0.0
+    return one / zero
+
+fun math_neg_inf_f32() -> f32:
+    return 0.0 - math_pos_inf_f32()
+
+fun math_neg_inf_f64() -> f64:
+    return 0.0 - math_pos_inf_f64()
+
+fun math_is_inf_f32(x: f32) -> bool:
+    return x > 3.40282347e+38 or x < (0.0 - 3.40282347e+38)
+
+fun math_is_inf_f64(x: f64) -> bool:
+    return x > 1.7976931348623157e+308 or x < (0.0 - 1.7976931348623157e+308)
+
 # ---------- trunc (f32/f64) ----------
 
 fun truncf(x: f32) -> f32:
+    if x != x or math_is_inf_f32(x):
+        return x
     n: i64 = x as i64
     return n as f32
 
 fun trunc(x: f64) -> f64:
+    if x != x or math_is_inf_f64(x):
+        return x
     n: i64 = x as i64
     return n as f64
 
@@ -64,15 +101,35 @@ fun round(x: f64) -> f64:
 # ---------- fmod (f32/f64) ----------
 
 fun fmodf(x: f32, y: f32) -> f32:
+    if x != x:
+        return x
+    if y != y:
+        return y
+    if y == 0.0 or math_is_inf_f32(x):
+        return math_nan_f32()
+    if math_is_inf_f32(y):
+        return x
     return x - truncf(x / y) * y
 
 fun fmod(x: f64, y: f64) -> f64:
+    if x != x:
+        return x
+    if y != y:
+        return y
+    if y == 0.0 or math_is_inf_f64(x):
+        return math_nan_f64()
+    if math_is_inf_f64(y):
+        return x
     return x - trunc(x / y) * y
 
 # ---------- sin (f32) ----------
 # Range reduction to [-pi/2, pi/2] + degree-9 minimax polynomial
 
 fun sinf(x: f32) -> f32:
+    if x != x:
+        return x
+    if math_is_inf_f32(x):
+        return math_nan_f32()
     pi: f32 = 3.14159265
     two_pi: f32 = 6.28318530
     half_pi: f32 = 1.57079632
@@ -93,6 +150,10 @@ fun sinf(x: f32) -> f32:
 # ---------- sin (f64) ----------
 
 fun sin(x: f64) -> f64:
+    if x != x:
+        return x
+    if math_is_inf_f64(x):
+        return math_nan_f64()
     pi: f64 = 3.14159265358979323846
     two_pi: f64 = 6.28318530717958647692
     half_pi: f64 = 1.57079632679489661923
@@ -128,21 +189,33 @@ fun tanf(x: f32) -> f32:
 fun tan(x: f64) -> f64:
     return sin(x) / cos(x)
 
-# ---------- atan (f32) ----------
-# Polynomial for |x| <= 1, identity atan(x) = pi/2 - atan(1/x) for |x| > 1
+# ---------- atan (f32/f64) ----------
+# Reduce to |z| <= tan(pi/8), where the alternating odd series converges fast.
+# The old implementation evaluated that series at z=1 and atan(1) was off by
+# ~3.55e-2 radians.  The pi/4 and pi/2 identities keep the same Pure Dolet
+# implementation while providing stable accuracy over the complete real line.
 
 fun atanf(x: f32) -> f32:
     half_pi: f32 = 1.57079632
+    quarter_pi: f32 = 0.785398163
+    tan_pi_8: f32 = 0.414213562
+    tan_3pi_8: f32 = 2.41421356
     v: f32 = x
     neg: bool = v < 0.0
     if neg:
         v = 0.0 - v
-    invert: bool = v > 1.0
-    if invert:
+    mode: i32 = 0
+    if v > tan_3pi_8:
         v = 1.0 / v
+        mode = 2
+    elif v > tan_pi_8:
+        v = (v - 1.0) / (v + 1.0)
+        mode = 1
     v2: f32 = v * v
-    r: f32 = v * (1.0 + v2 * (0.0 - 0.3333333 + v2 * (0.2 + v2 * (0.0 - 0.142857142 + v2 * (0.111111111 + v2 * (0.0 - 0.0909090 + v2 * 0.0769231))))))
-    if invert:
+    r: f32 = v * (1.0 + v2 * (0.0 - 0.333333333 + v2 * (0.2 + v2 * (0.0 - 0.142857143 + v2 * (0.111111111 + v2 * (0.0 - 0.090909091 + v2 * (0.076923077 + v2 * (0.0 - 0.066666667))))))))
+    if mode == 1:
+        r = quarter_pi + r
+    elif mode == 2:
         r = half_pi - r
     if neg:
         r = 0.0 - r
@@ -152,16 +225,25 @@ fun atanf(x: f32) -> f32:
 
 fun atan(x: f64) -> f64:
     half_pi: f64 = 1.57079632679489661923
+    quarter_pi: f64 = 0.78539816339744830962
+    tan_pi_8: f64 = 0.41421356237309504880
+    tan_3pi_8: f64 = 2.41421356237309504880
     v: f64 = x
     neg: bool = v < 0.0
     if neg:
         v = 0.0 - v
-    invert: bool = v > 1.0
-    if invert:
+    mode: i32 = 0
+    if v > tan_3pi_8:
         v = 1.0 / v
+        mode = 2
+    elif v > tan_pi_8:
+        v = (v - 1.0) / (v + 1.0)
+        mode = 1
     v2: f64 = v * v
-    r: f64 = v * (1.0 + v2 * (0.0 - 0.3333333333333330 + v2 * (0.2000000000000000 + v2 * (0.0 - 0.1428571428571428 + v2 * (0.1111111111111111 + v2 * (0.0 - 0.0909090909090909 + v2 * (0.0769230769230769 + v2 * (0.0 - 0.0666666666666666))))))))
-    if invert:
+    r: f64 = v * (1.0 + v2 * (0.0 - 0.33333333333333333333 + v2 * (0.2 + v2 * (0.0 - 0.14285714285714285714 + v2 * (0.11111111111111111111 + v2 * (0.0 - 0.09090909090909090909 + v2 * (0.07692307692307692308 + v2 * (0.0 - 0.06666666666666666667 + v2 * (0.05882352941176470588 + v2 * (0.0 - 0.05263157894736842105 + v2 * (0.04761904761904761905 + v2 * (0.0 - 0.04347826086956521739))))))))))))
+    if mode == 1:
+        r = quarter_pi + r
+    elif mode == 2:
         r = half_pi - r
     if neg:
         r = 0.0 - r
@@ -170,6 +252,10 @@ fun atan(x: f64) -> f64:
 # ---------- atan2 (f32/f64) ----------
 
 fun atan2f(y: f32, x: f32) -> f32:
+    if x != x:
+        return x
+    if y != y:
+        return y
     pi: f32 = 3.14159265
     if x > 0.0:
         return atanf(y / x)
@@ -184,6 +270,10 @@ fun atan2f(y: f32, x: f32) -> f32:
     return 0.0
 
 fun atan2(y: f64, x: f64) -> f64:
+    if x != x:
+        return x
+    if y != y:
+        return y
     pi: f64 = 3.14159265358979323846
     if x > 0.0:
         return atan(y / x)
@@ -219,9 +309,11 @@ fun acos(x: f64) -> f64:
 # Range reduction: x = n*ln2 + r, exp(x) = 2^n * exp(r)
 
 fun expf(x: f32) -> f32:
-    if x > 88.0:
-        return 3.40282347e+38
-    if x < (0.0 - 88.0):
+    if x != x:
+        return x
+    if x > 88.722839:
+        return math_pos_inf_f32()
+    if x < (0.0 - 103.972084):
         return 0.0
     ln2: f32 = 0.6931472
     n_f: f32 = truncf(x / ln2 + 0.5)
@@ -245,9 +337,11 @@ fun expf(x: f32) -> f32:
 # ---------- exp (f64) ----------
 
 fun exp(x: f64) -> f64:
-    if x > 709.0:
-        return 1.7976931348623157e+308
-    if x < (0.0 - 709.0):
+    if x != x:
+        return x
+    if x > 709.782712893384:
+        return math_pos_inf_f64()
+    if x < (0.0 - 745.133219101941):
         return 0.0
     ln2: f64 = 0.69314718055994530942
     n_f: f64 = trunc(x / ln2 + 0.5)
@@ -273,8 +367,14 @@ fun exp(x: f64) -> f64:
 # log(m) via series: let t=(m-1)/(m+1), log(m) = 2*(t + t^3/3 + t^5/5 + ...)
 
 fun logf(x: f32) -> f32:
-    if x <= 0.0:
-        return 0.0 - 3.40282347e+38
+    if x != x:
+        return x
+    if x < 0.0:
+        return math_nan_f32()
+    if x == 0.0:
+        return math_neg_inf_f32()
+    if math_is_inf_f32(x):
+        return x
     ln2: f32 = 0.6931472
     e: i32 = 0
     m: f32 = x
@@ -292,8 +392,14 @@ fun logf(x: f32) -> f32:
 # ---------- log (f64) ----------
 
 fun log(x: f64) -> f64:
-    if x <= 0.0:
-        return 0.0 - 1.7976931348623157e+308
+    if x != x:
+        return x
+    if x < 0.0:
+        return math_nan_f64()
+    if x == 0.0:
+        return math_neg_inf_f64()
+    if math_is_inf_f64(x):
+        return x
     ln2: f64 = 0.69314718055994530942
     e: i32 = 0
     m: f64 = x
@@ -336,13 +442,32 @@ fun exp2(x: f64) -> f64:
 fun powf(x: f32, y: f32) -> f32:
     if y == 0.0:
         return 1.0
+    if x == 1.0:
+        return 1.0
+    if x != x:
+        return x
+    if y != y:
+        return y
     if x == 0.0:
+        if y < 0.0:
+            return math_pos_inf_f32()
         return 0.0
     if x < 0.0:
-        n: i32 = y as i32
         abs_x: f32 = 0.0 - x
+        if math_is_inf_f32(y):
+            if abs_x == 1.0:
+                return 1.0
+            if (abs_x > 1.0 and y > 0.0) or (abs_x < 1.0 and y < 0.0):
+                return math_pos_inf_f32()
+            return 0.0
+        integral_y: f32 = truncf(y)
+        if integral_y != y:
+            return math_nan_f32()
         result: f32 = expf(y * logf(abs_x))
-        n_mod2: i32 = n - (n / 2) * 2
+        if y > 9223372036854775807.0 or y < (0.0 - 9223372036854775807.0):
+            return result
+        n: i64 = y as i64
+        n_mod2: i64 = n - (n / 2) * 2
         if n_mod2 != 0:
             return 0.0 - result
         return result
@@ -351,13 +476,32 @@ fun powf(x: f32, y: f32) -> f32:
 fun pow(x: f64, y: f64) -> f64:
     if y == 0.0:
         return 1.0
+    if x == 1.0:
+        return 1.0
+    if x != x:
+        return x
+    if y != y:
+        return y
     if x == 0.0:
+        if y < 0.0:
+            return math_pos_inf_f64()
         return 0.0
     if x < 0.0:
-        n: i32 = y as i32
         abs_x: f64 = 0.0 - x
+        if math_is_inf_f64(y):
+            if abs_x == 1.0:
+                return 1.0
+            if (abs_x > 1.0 and y > 0.0) or (abs_x < 1.0 and y < 0.0):
+                return math_pos_inf_f64()
+            return 0.0
+        integral_y: f64 = trunc(y)
+        if integral_y != y:
+            return math_nan_f64()
         result: f64 = exp(y * log(abs_x))
-        n_mod2: i32 = n - (n / 2) * 2
+        if y > 9223372036854775807.0 or y < (0.0 - 9223372036854775807.0):
+            return result
+        n: i64 = y as i64
+        n_mod2: i64 = n - (n / 2) * 2
         if n_mod2 != 0:
             return 0.0 - result
         return result

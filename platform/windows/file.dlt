@@ -34,6 +34,12 @@
 struct FileOps:
     # Delete a filesystem entry. Returns non-zero on success.
     static fun file_delete(path: str) -> i32:
+        attributes: i32 = GetFileAttributesA(path)
+        if attributes == -1:
+            return 0
+        if (attributes & 1) != 0:  # FILE_ATTRIBUTE_READONLY
+            if SetFileAttributesA(path, attributes & (-2)) == 0:
+                return 0
         return DeleteFileA(path)
 
     # ========== File Open/Close ==========

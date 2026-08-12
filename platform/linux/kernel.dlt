@@ -60,6 +60,10 @@ fun close(fd: i32) -> i32:
     return __linux_syscall1(3, fd as i64) as i32
 
 @noarena
+fun flock(fd: i32, operation: i32) -> i32:
+    return __linux_syscall2(73, fd as i64, operation as i64) as i32
+
+@noarena
 fun read(fd: i32, buffer: i64, count: i64) -> i64:
     return __linux_syscall3(0, fd as i64, buffer, count)
 
@@ -78,6 +82,26 @@ fun lseek(fd: i32, offset: i64, whence: i32) -> i64:
 @noarena
 fun unlink(path: str) -> i32:
     return __linux_syscall1(87, path as i64) as i32
+
+@noarena
+fun newfstatat(directory: i32, path: str, stat_buffer: i64, flags: i32) -> i32:
+    return __linux_syscall4(262, directory as i64, path as i64, stat_buffer, flags as i64) as i32
+
+@noarena
+fun mkdirat(directory: i32, path: str, mode: i32) -> i32:
+    return __linux_syscall3(258, directory as i64, path as i64, mode as i64) as i32
+
+@noarena
+fun unlinkat(directory: i32, path: str, flags: i32) -> i32:
+    return __linux_syscall3(263, directory as i64, path as i64, flags as i64) as i32
+
+@noarena
+fun chdir(path: str) -> i32:
+    return __linux_syscall1(80, path as i64) as i32
+
+@noarena
+fun renameat(old_directory: i32, old_path: str, new_directory: i32, new_path: str) -> i32:
+    return __linux_syscall4(264, old_directory as i64, old_path as i64, new_directory as i64, new_path as i64) as i32
 
 @noarena
 fun access(path: str, mode: i32) -> i32:

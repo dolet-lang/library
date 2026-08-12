@@ -1,0 +1,131 @@
+# Target-owned host services used by portable developer tools.
+#
+# This is deliberately a narrow facade. Applications such as Obin never
+# import Win32 directly; the selected platform pack supplies the same
+# PlatformHost contract on every supported host.
+
+struct PlatformHost:
+    static fun executable_suffix() -> str:
+        return ".exe"
+
+    static fun path_list_separator() -> i32:
+        return 59  # ';'
+
+    static fun paths_are_case_sensitive() -> bool:
+        return false
+
+    static fun get_environment(name: str) -> str:
+        capacity: i32 = 32768
+        buffer: i64 = Memory.malloc_zeroed(capacity as i64)
+        if buffer == 0:
+            return ""
+        length: i32 = GetEnvironmentVariableA(name, buffer, capacity)
+        if length <= 0 or length >= capacity:
+            Memory.free(buffer)
+            return ""
+        Memory.write_i8(buffer + (length as i64), 0 as i8)
+        return buffer as str
+
+    static fun is_directory(path: str) -> i32:
+        attributes: i32 = GetFileAttributesA(path)
+        if attributes == -1:
+            return 0
+        if (attributes & 16) != 0:
+            return 1
+        return 0
+
+    static fun is_link(path: str) -> i32:
+        attributes: i32 = GetFileAttributesA(path)
+        if attributes == -1:
+            return 0
+        if (attributes & 1024) != 0:
+            return 1
+        return 0
+
+    static fun file_stamp(path: str) -> i64:
+        find_data: i64 = Memory.malloc_zeroed(320)
+        if find_data == 0:
+            return 0
+        handle: i64 = FindFirstFileA(path, find_data)
+        if handle == -1:
+            Memory.free(find_data)
+            return 0
+        # WIN32_FIND_DATAA.ftLastWriteTime starts at byte 20.  The previous
+        # offsets accidentally mixed its high word with nFileSizeHigh, which
+        # made incremental-build stamps depend on file size instead of time.
+        low: i64 = Memory.read_i32(find_data + 20) as i64
+        high: i64 = Memory.read_i32(find_data + 24) as i64
+        if low < 0:
+            low = low + 4294967296
+        if high < 0:
+            high = high + 4294967296
+        stamp: i64 = (high << 32) | low
+        FindClose(handle)
+        Memory.free(find_data)
+        return stamp
+
+    static fun create_directory(path: str) -> i32:
+        if PlatformHost.is_directory(path) == 1:
+            return 1
+        if CreateDirectoryA(path, 0) != 0:
+            return 1
+        return PlatformHost.is_directory(path)
+
+    static fun remove_directory(path: str) -> i32:
+        return RemoveDirectoryA(path)
+
+    static fun remove_file(path: str) -> i32:
+        attributes: i32 = GetFileAttributesA(path)
+        if attributes == -1:
+            return 0
+        if (attributes & 1) != 0:  # FILE_ATTRIBUTE_READONLY
+            if SetFileAttributesA(path, attributes & (-2)) == 0:
+                return 0
+        return DeleteFileA(path)
+
+    static fun remove_link(path: str) -> i32:
+        attributes: i32 = GetFileAttributesA(path)
+        if attributes == -1 or (attributes & 1024) == 0:
+            return 0
+        if (attributes & 1) != 0:
+            if SetFileAttributesA(path, attributes & (-2)) == 0:
+                return 0
+        if (attributes & 16) != 0:
+            return RemoveDirectoryA(path)
+        return DeleteFileA(path)
+
+    static fun copy_file(source: str, destination: str) -> i32:
+        return CopyFileA(source, destination, 0)
+
+    static fun move_path(source: str, destination: str) -> i32:
+        # Atomic same-volume publication with replacement and a durable flush.
+        # Unlike delete + MoveFileA, readers never observe a missing lock file.
+        movefile_replace_existing: i32 = 1
+        movefile_write_through: i32 = 8
+        return MoveFileExA(source, destination, movefile_replace_existing | movefile_write_through)
+
+    static fun acquire_process_lock(path: str) -> i64:
+        # A zero-share OPEN_ALWAYS handle is a kernel-owned inter-process
+        # mutex tied to this path. The kernel releases it even after a crash.
+        open_always: i32 = 4
+        attempts: i32 = 0
+        while attempts < 6000:
+            # A zero-access handle does not participate in Windows share-mode
+            # conflicts. Request read+write so share=0 is an actual mutex.
+            generic_read_write: i32 = -1073741824  # 0xC0000000
+            handle: i64 = CreateFileA(path, generic_read_write, 0, 0, open_always, 128, 0)
+            if handle != -1:
+                return handle
+            error: i32 = GetLastError()
+            if error != 32 and error != 33:  # sharing/lock violation
+                return 0
+            Sleep(10)
+            attempts = attempts + 1
+        return 0
+
+    static fun release_process_lock(handle: i64):
+        if handle != 0 and handle != -1:
+            CloseHandle(handle)
+
+    static fun change_directory(path: str) -> i32:
+        return SetCurrentDirectoryA(path)

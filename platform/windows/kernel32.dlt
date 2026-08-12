@@ -29,6 +29,13 @@ extern lib "kernel32":
     # Path APIs
     fun GetFullPathNameA(lpFileName: str, nBufferLength: i32, lpBuffer: i64, lpFilePart: i64) -> i32
     fun GetCurrentDirectoryA(nBufferLength: i32, lpBuffer: i64) -> i32
+    fun SetCurrentDirectoryA(lpPathName: str) -> i32
+    fun GetEnvironmentVariableA(lpName: str, lpBuffer: i64, nSize: i32) -> i32
+    fun CreateDirectoryA(lpPathName: str, lpSecurityAttributes: i64) -> i32
+    fun RemoveDirectoryA(lpPathName: str) -> i32
+    fun CopyFileA(lpExistingFileName: str, lpNewFileName: str, bFailIfExists: i32) -> i32
+    fun MoveFileA(lpExistingFileName: str, lpNewFileName: str) -> i32
+    fun MoveFileExA(lpExistingFileName: str, lpNewFileName: str, dwFlags: i32) -> i32
     fun GetModuleFileNameA(hModule: i64, lpFilename: i64, nSize: i32) -> i32
     fun GetCommandLineA() -> str
     # Process execution APIs
@@ -41,6 +48,7 @@ extern lib "kernel32":
     fun SetHandleInformation(hObject: i64, dwMask: i32, dwFlags: i32) -> i32
     fun DeleteFileA(lpFileName: str) -> i32
     fun GetFileAttributesA(lpFileName: str) -> i32
+    fun SetFileAttributesA(lpFileName: str, dwFileAttributes: i32) -> i32
     fun PeekNamedPipe(hNamedPipe: i64, lpBuffer: i64, nBufferSize: i32, lpBytesRead: i64, lpTotalBytesAvail: i64, lpBytesLeftThisMessage: i64) -> i32
     # Directory enumeration
     fun FindFirstFileA(lpFileName: str, lpFindFileData: i64) -> i64
