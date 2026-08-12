@@ -9,6 +9,7 @@ extern lib "dolet-runtime":
     fun __dolet_linux_arena_state() -> i64
     fun __dolet_linux_heap_state() -> i64
     fun __dolet_thread_spawn(entry: i64, argument: i64) -> i64
+    fun __dolet_thread_join(handle: i64)
 
 @noarena
 fun __linux_syscall0(number: i64) -> i64:

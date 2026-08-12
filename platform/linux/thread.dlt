@@ -6,8 +6,8 @@ fun __thread_entry(env: i64) -> i64:
     return 0
 
 struct Thread:
-    # Base of a target-owned mapping. Offset 0 is the kernel clear-tid word;
-    # offset 8 stores the complete stack/TLS mapping size.
+    # Opaque target-owned thread handle. Static and desktop Linux runtimes use
+    # different kernel/loader strategies without leaking that ABI into std.
     handle: i64
 
 attach Thread:
@@ -17,13 +17,7 @@ attach Thread:
     fun join(self):
         if self.handle == 0:
             return
-        tid: i32 = __atomic_load_i32(self.handle)
-        while tid != 0:
-            __linux_futex(self.handle, 0, tid, 0)
-            tid = __atomic_load_i32(self.handle)
-        mapping_size: i64 = Memory.read_i64(self.handle + 8)
-        if mapping_size > 0:
-            __linux_munmap(self.handle, mapping_size)
+        __dolet_thread_join(self.handle)
 
     static fun sleep(ms: i32):
         if ms <= 0:

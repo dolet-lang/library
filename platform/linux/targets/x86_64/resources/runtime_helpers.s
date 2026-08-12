@@ -146,6 +146,38 @@ __dolet_thread_spawn:
     ret
     .size __dolet_thread_spawn, .-__dolet_thread_spawn
 
+    .globl __dolet_thread_join
+    .type __dolet_thread_join,@function
+__dolet_thread_join:
+    testq %rdi, %rdi
+    jz .Ljoin_done
+    pushq %rbx
+    movq %rdi, %rbx
+.Ljoin_wait:
+    movl 0(%rbx), %edx
+    testl %edx, %edx
+    jz .Ljoin_release
+    movq $202, %rax          /* futex */
+    movq %rbx, %rdi
+    xorq %rsi, %rsi          /* FUTEX_WAIT */
+    xorq %r10, %r10          /* no timeout */
+    xorq %r8, %r8
+    xorq %r9, %r9
+    syscall
+    jmp .Ljoin_wait
+.Ljoin_release:
+    movq 8(%rbx), %rsi
+    testq %rsi, %rsi
+    jz .Ljoin_pop
+    movq $11, %rax           /* munmap */
+    movq %rbx, %rdi
+    syscall
+.Ljoin_pop:
+    popq %rbx
+.Ljoin_done:
+    ret
+    .size __dolet_thread_join, .-__dolet_thread_join
+
     .bss
     .p2align 6
 __dolet_heap_state:

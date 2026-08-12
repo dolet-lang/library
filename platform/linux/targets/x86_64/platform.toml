@@ -35,6 +35,20 @@ link_options = "-static -m elf_x86_64"
 stack_size = ""
 entry = "_start"
 
+# Graphical Linux applications use the system ELF loader because X11 and
+# Vulkan are system APIs with loader-owned ABIs. The compiler selects this
+# profile automatically when the resolved source declares either external
+# library; the public target remains `linux/x86_64`.
+[link.dynamic]
+dynamic_for_libs = "X11,vulkan"
+dynamic_resource_root = "platform/linux/targets/x86_64/resources/desktop"
+dynamic_default_libs = "pthread,c"
+dynamic_runtime_helpers = "runtime_helpers.o"
+dynamic_pre_objects = "entry_helpers.o"
+dynamic_post_objects = ""
+dynamic_link_options = "-m elf_x86_64 --allow-shlib-undefined -dynamic-linker /lib64/ld-linux-x86-64.so.2"
+dynamic_entry = "_start"
+
 [link.flags]
 output = "-o {path}"
 libpath = "-L{path}"
