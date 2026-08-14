@@ -42,6 +42,15 @@ struct PlatformHost:
             return 1
         return 0
 
+    static fun is_executable(path: str) -> i32:
+        # Windows does not expose a Unix-style execute bit. The host manifest
+        # supplies the executable suffix, so an existing non-directory file is
+        # a launchable candidate and CreateProcess remains the final authority.
+        attributes: i32 = GetFileAttributesA(path)
+        if attributes == -1 or (attributes & 16) != 0:
+            return 0
+        return 1
+
     static fun file_stamp(path: str) -> i64:
         find_data: i64 = Memory.malloc_zeroed(320)
         if find_data == 0:
