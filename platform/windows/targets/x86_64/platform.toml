@@ -29,7 +29,7 @@ exe_ext = ".exe"
 default_libs = "kernel32, ws2_32"
 runtime_helpers = "runtime_helpers.obj"
 stack_size = 8388608
-entry = "main"
+entry = "_start"
 
 [link.flags]
 output = "-out:{path}"

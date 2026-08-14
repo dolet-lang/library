@@ -27,6 +27,9 @@ X11_EXPOSURE_MASK: i64 = 32768
 X11_STRUCTURE_NOTIFY_MASK: i64 = 131072
 X11_FOCUS_CHANGE_MASK: i64 = 2097152
 
+# XImage format used by the software framebuffer presentation path.
+X11_Z_PIXMAP: i32 = 2
+
 # Pointer masks returned by XQueryPointer.
 X11_BUTTON1_MASK: i32 = 256
 X11_BUTTON3_MASK: i32 = 1024
@@ -70,5 +73,12 @@ extern lib "X11":
     fun XQueryPointer(display: i64, window: i64, root_return: i64, child_return: i64, root_x_return: i64, root_y_return: i64, win_x_return: i64, win_y_return: i64, mask_return: i64) -> i32
     fun XKeysymToKeycode(display: i64, keysym: i64) -> i32
     fun XQueryKeymap(display: i64, keys_return: i64) -> i32
+    fun XLookupString(event_struct: i64, buffer_return: i64, bytes_buffer: i32, keysym_return: i64, status_in_out: i64) -> i32
+    fun XDefaultVisual(display: i64, screen_number: i32) -> i64
+    fun XDefaultDepth(display: i64, screen_number: i32) -> i32
+    fun XDefaultGC(display: i64, screen_number: i32) -> i64
+    fun XCreateImage(display: i64, visual: i64, depth: i32, format: i32, offset: i32, data: i64, width: i32, height: i32, bitmap_pad: i32, bytes_per_line: i32) -> i64
+    fun XPutImage(display: i64, drawable: i64, gc: i64, image: i64, src_x: i32, src_y: i32, dest_x: i32, dest_y: i32, width: i32, height: i32) -> i32
+    fun XFree(data: i64) -> i32
     fun XInternAtom(display: i64, atom_name: str, only_if_exists: i32) -> i64
     fun XSetWMProtocols(display: i64, window: i64, protocols: i64, count: i32) -> i32
